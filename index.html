@@ -133,7 +133,7 @@ label{display:block;font-weight:600;margin:16px 0 6px}
 .item .t{font-weight:650}
 .item .s{font-size:15px;color:var(--muted)}
 .item button.sm{background:var(--primary-soft);color:var(--primary);border-radius:999px;padding:9px 16px;font-weight:700;font-size:15px;white-space:nowrap}
-.lh{margin:18px 4px 6px;font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.tabs{display:flex;gap:4px;background:var(--fill);border-radius:999px;padding:4px;margin:14px 0}
+.rings{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center}.rg b{display:block;font-size:14px;font-family:var(--rounded)}.rg small{color:var(--muted);font-size:12px}.ring{width:100%;max-width:84px}.nudge{border:2px solid var(--primary-soft)}.nudge .eyebrow{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--primary)}.lh{margin:18px 4px 6px;font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.tabs{display:flex;gap:4px;background:var(--fill);border-radius:999px;padding:4px;margin:14px 0}
 .tabs button{flex:1;padding:11px 6px;border-radius:999px;font-weight:650;font-size:16px;color:var(--muted)}
 .tabs button.on{background:var(--card);color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.1)}
 .subjects{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
@@ -299,7 +299,7 @@ const CONFIG = {
   DEFAULT_RATE: 100,             // points per $1 (Mom can change this in Rewards)
   STORAGE_KEY: 'g5tutor.v1',
   SHOW_MONEY: false,             // learner screens: show dollars earned + goal progress (parked for now; points still show)
-  VERSION: 'v12 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
+  VERSION: 'v13 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -727,6 +727,88 @@ ${done.length > 8 ? `<button class="link" data-a="toggleOld">${SHOW_OLD ? 'Show 
 ${!inTab.length && !writing.length ? `<div class="card"><p class="muted">${all.length ? 'No lessons in this subject yet.' : 'No lessons yet. Tap “New lesson” and type a topic like “Multiplying fractions”.'}</p></div>` : ''}`;
 }
 A.lessonTab = v => { LTAB = v; SHOW_OLD = false; render(); };
+/* ---------- Subject overview + nudge (Mom) and journey rings (Aanya) ---------- */
+const HALF_LIFE_DAYS = 21;
+function subjStats(subj) {
+  const rs = S.results.filter(r => r.subject === subj && r.masteryTotal > 0);
+  let w = 0, sum = 0; const now = Date.now();
+  rs.forEach(r => { const wt = Math.pow(0.5, (now - r.at) / 864e5 / HALF_LIFE_DAYS); w += wt; sum += wt * r.mastery; });
+  const cov = coverage(subj), items = CURRICULUM[subj].strands.flatMap(x => x.items);
+  const covered = items.filter(([c]) => cov[c] && cov[c].total).length;
+  const lastAt = S.results.filter(r => r.subject === subj).reduce((m, r) => Math.max(m, r.at), 0);
+  return { mastery: w ? Math.round(sum / w) : null, n: rs.length, covered, total: items.length, lastAt, cov, items };
+}
+const focusActive = () => { const f = S.settings.focus; return f && f.text && Date.now() - f.at < 31 * 864e5 ? f : null; };
+const words = t => String(t || '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3);
+function nudge() {
+  const f = focusActive(), st = {}, now = Date.now();
+  const subs = Object.keys(SUBJECTS);
+  subs.forEach(k => st[k] = subjStats(k));
+  const need = k => {
+    const x = st[k], days = x.lastAt ? Math.min(14, (now - x.lastAt) / 864e5) : 14;
+    return (x.mastery == null ? 55 : Math.max(0, 90 - x.mastery)) + (1 - x.covered / x.total) * 25 + days * 1.5 + (f && f.subject === k ? 80 : 0);
+  };
+  const top = subs.slice().sort((a, b) => need(b) - need(a))[0], x = st[top], label = SUBJECTS[top].label;
+  const lessons = S.order.map(id => S.lessons[id]).filter(L => L && L.meta.subject === top && L.id !== S.todayLessonId);
+  const info = new Map(lessons.map(L => [L, lessonInfo(L)]));
+  const make = (topic, expCode, why) => ({ subject: top, make: { topic, expCode }, why });
+  if (f && f.subject === top) {
+    const fw = new Set(words(f.text));
+    const hit = lessons.filter(L => words(L.meta.title + ' ' + (L.meta.topic || '') + ' ' + (L.meta.strand || '')).some(w => fw.has(w)));
+    const pick = hit.find(L => info.get(L).group === 'ready') || hit.find(L => info.get(L).group === 'redo') || hit.sort((a, b) => ((info.get(a).res[0] || { at: 0 }).at - (info.get(b).res[0] || { at: 0 }).at))[0];
+    if (pick) return { subject: top, lesson: pick, why: `Her class is working on “${f.text}”, and this lesson fits.` };
+    return make(f.text, '', `Her class is working on “${f.text}” and there’s no lesson for it yet.`);
+  }
+  const redo = lessons.filter(L => info.get(L).group === 'redo').sort((a, b) => info.get(a).res[0].mastery - info.get(b).res[0].mastery)[0];
+  if (redo) return { subject: top, lesson: redo, why: `${label} needs the most help${x.mastery != null ? ' (' + x.mastery + '% lately)' : ''}. “${redo.meta.title}” scored ${info.get(redo).res[0].mastery}% last time.` };
+  const ready = seqOrder(lessons.filter(L => info.get(L).group === 'ready'))[0];
+  if (ready) return { subject: top, lesson: ready, why: x.n ? `${label} could use more practice, and this lesson is ready and waiting.` : `She hasn’t done any ${label} yet. This lesson is ready.` };
+  const weak = Object.entries(x.cov).filter(([c, e]) => e.total >= 2 && e.right / e.total < 0.7).sort((a, b) => a[1].right / a[1].total - b[1].right / b[1].total)[0];
+  if (weak) return make(expText(top, weak[0]), weak[0], `${label}: ${weak[0]} is her weakest spot (${Math.round(100 * weak[1].right / weak[1].total)}%), and there’s no lesson to redo.`);
+  const gap = x.items.find(([c]) => !x.cov[c] || (!x.cov[c].lessons && !x.cov[c].total));
+  if (gap) return make(gap[1], gap[0], `${label} has Grade 5 topics she hasn’t seen yet. Next up: ${gap[1].length > 70 ? gap[1].slice(0, 70).replace(/\s+\S*$/, '') + '…' : gap[1]}`);
+  const old = lessons.filter(L => info.get(L).res.length).sort((a, b) => info.get(a).res[0].at - info.get(b).res[0].at)[0];
+  return old ? { subject: top, lesson: old, why: `Everything in ${label} is covered. A refresher: she did this one longest ago.` } : null;
+}
+function ringSvg(frac, cls, inner) {
+  const r = 30, c = 2 * Math.PI * r, v = clamp(frac, 0, 1);
+  return `<svg viewBox="0 0 76 76" class="ring ${cls}"><circle cx="38" cy="38" r="${r}" fill="none" stroke="var(--fill)" stroke-width="9"/><circle cx="38" cy="38" r="${r}" fill="none" stroke="var(--s1)" stroke-width="9" stroke-linecap="round" stroke-dasharray="${(c * v).toFixed(1)} ${c.toFixed(1)}" transform="rotate(-90 38 38)"/><text x="38" y="46" text-anchor="middle" font-size="24">${inner}</text></svg>`;
+}
+function kidJourney() {
+  const any = S.results.length;
+  if (!any) return '';
+  return `<h3>My journey</h3><div class="card"><div class="rings">${Object.keys(SUBJECTS).map(k => { const x = subjStats(k); return `<div class="rg s-${k}">${ringSvg(x.total ? Math.max(x.covered / x.total, x.covered ? 0.06 : 0) : 0, '', SUBJECTS[k].emoji)}<b>${SUBJECTS[k].label}</b><small>${x.covered ? x.covered + ' explored' : 'Coming up'}</small></div>`; }).join('')}</div></div>`;
+}
+FORMS.FOCUS = { text: '', subject: 'math' };
+function overviewBlock() {
+  if (!S.order.length && !S.results.length) return '';
+  const f = focusActive(), nd = nudge(), subs = Object.keys(SUBJECTS), F = FORMS.FOCUS;
+  const row = k => {
+    const x = subjStats(k), low = x.mastery != null && x.mastery < REDO_BELOW;
+    return `<li class="item" data-a="lessonTab" data-v="${k}" style="cursor:pointer"><span style="font-size:26px">${SUBJECTS[k].emoji}</span>
+    <div class="grow"><div class="t">${SUBJECTS[k].label}${f && f.subject === k ? ' <span class="chip p">Class focus</span>' : ''}${nd && nd.subject === k ? ' <span class="chip" style="background:#FFF1D6;color:#9A5B00">Suggested</span>' : ''}</div>
+    <div class="s">${x.covered} of ${x.total} Grade 5 topics covered${x.lastAt ? ' · last ' + fmtDate(x.lastAt) : ' · none yet'}</div></div>
+    <div style="text-align:right;min-width:62px"><b style="font-size:22px${low ? ';color:var(--danger)' : ''}">${x.mastery == null ? '—' : x.mastery + '%'}</b><div class="s">doing</div></div></li>`;
+  };
+  const assignBtn = nd && (nd.lesson ? `<button class="big primary" data-a="nudgeAssign" data-v="${nd.lesson.id}">${S.todayLessonId ? 'Assign instead' : 'Assign'}: ${esc(nd.lesson.meta.title)}</button>` : `<button class="big primary" data-a="nudgeMake">Make &amp; assign (a few cents)</button><p class="muted"><small>Writes a new ${esc(SUBJECTS[nd.subject].label)} lesson about: ${esc(String(nd.make.topic).slice(0, 90))}</small></p>`);
+  return `<h3>How she’s doing</h3>
+${nd ? `<div class="card nudge"><div class="eyebrow">${S.todayLessonId ? 'Up next (after today’s lesson)' : 'Suggested next lesson'} · ${SUBJECTS[nd.subject].emoji} ${esc(SUBJECTS[nd.subject].label)}</div><p>${esc(nd.why)}</p>${assignBtn}</div>` : ''}
+<div class="card"><ul class="list">${subs.map(row).join('')}</ul><p class="muted"><small>“Doing” leans on the last few weeks, so older scores matter less. “Covered” counts topics she has practised.</small></p></div>
+<details class="card"><summary><b>Class focus${f ? ': ' + esc(f.text) : ''}</b> <span class="muted">${f ? '(' + esc(SUBJECTS[f.subject].label) + ')' : '(optional)'}</span></summary>
+  <label>What is her class doing this month?</label><input data-bind="FOCUS:text" value="${esc(F.text || (f ? f.text : ''))}" placeholder="e.g. Adding and subtracting fractions">
+  <div class="tabs" style="overflow-x:auto">${subs.map(k => `<button class="${(F.subject) === k ? 'on' : ''}" data-a="focusSubj" data-v="${k}" style="white-space:nowrap">${SUBJECTS[k].emoji} ${SUBJECTS[k].label}</button>`).join('')}</div>
+  <div class="row"><button class="ghost" data-a="focusSave">Save focus</button>${f ? '<button class="ghost danger" data-a="focusClear">Clear</button>' : ''}</div>
+  <p class="muted"><small>Suggestions will favour this for a month, then go back to weak spots and gaps.</small></p></details>`;
+}
+A.focusSubj = v => { FORMS.FOCUS.subject = v; render(); };
+A.focusSave = () => { const t = str(FORMS.FOCUS.text); if (!t) { toast('Type what the class is doing first.'); return; } S.settings.focus = { text: t.slice(0, 120), subject: FORMS.FOCUS.subject, at: Date.now() }; save(); toast('Saved. Suggestions will favour it.'); render(); };
+A.focusClear = () => { S.settings.focus = null; FORMS.FOCUS = { text: '', subject: 'math' }; save(); render(); };
+A.nudgeAssign = id => A.assignLesson(id);
+A.nudgeMake = () => {
+  const nd = nudge(); if (!nd || !nd.make) return;
+  if (!S.settings.apiKey) { toast('First add your Claude key in Settings.'); go('settings'); return; }
+  startGen({ subject: nd.subject, expCode: nd.make.expCode || '', mode: 'topic', topic: nd.make.topic, text: '', file: null, split: false, autoAssign: true });
+};
 VIEWS.momHome = () => {
   const pend = S.results.filter(r => !r.accepted);
   const flags = S.flags.filter(f => f.status === 'open');
@@ -743,6 +825,7 @@ ${pend.length ? `<h3>Results to check</h3><div class="card"><ul class="list">${p
   <li class="item"><div class="grow"><div class="t">${esc(r.title)}</div><div class="s">${fmtDate(r.at)} · ${r.mastery}% on the check · ${r.minutes} min</div></div>
   <button class="sm" data-a="openResult" data-v="${r.id}">View</button><button class="sm" data-a="acceptResult" data-v="${r.id}">Accept</button></li>`).join('')}</ul></div>` : ''}
 ${flags.length ? `<button class="big ghost" data-a="go" data-v="flags">🚩 ${flags.length} question${flags.length > 1 ? 's' : ''} ${esc(kidName())} flagged</button>` : ''}
+${overviewBlock()}
 ${lessonsBlock(writing)}
 <div class="row"><button class="big ghost" data-a="go" data-v="curriculum">📚 Curriculum</button><button class="big ghost" data-a="go" data-v="results">📊 All results</button><button class="big ghost" data-a="go" data-v="rewards">🎁 Rewards</button><button class="big ghost" data-a="go" data-v="settings">⚙️ Settings</button></div>`;
 };
@@ -1121,6 +1204,7 @@ async function startGen(req) {
     const out = await authorLesson(req, n => { job.chars = n; updateGenBar(); }, job.ctrl.signal);
     if (GEN !== job) return;
     const L = saveNewLesson(out, req);
+    if (req.autoAssign && !S.attempt) { S.todayLessonId = L.id; logAssign(L.id); save(); }
     job.status = 'done'; job.lessonId = L.id;
     if (view.name === 'generating') go('summary', { id: L.id }); else { toast('Your lesson is ready.'); if (view.name === 'momHome') render(); }
     pumpSequences();
@@ -1344,6 +1428,7 @@ ${L ? `<div class="hero s-${esc(L.meta.subject)}"><span class="mark">${SUBJECTS[
   <p>Grab a pencil and paper.</p>
   <button class="go" data-a="${resumeLesson ? 'resumePlay' : 'startPlay'}">${ICON.play}${resumeLesson ? 'Keep going' : 'Let’s go'}</button></div>`
   : `<div class="card"><h2>No lesson right now</h2><p class="muted">${S.results.length ? 'Great work! Ask Mom for the next one.' : 'Ask Mom to start one.'}</p></div>`}
+${kidJourney()}
 ${resumeReview ? `<button class="big secondary" data-a="resumePlay">Finish your review</button>` : ''}
 ${due && !resumeReview ? `<button class="big secondary" data-a="startReview">Review your mistakes (${due})</button>` : ''}
 ${S.notebook.length ? `<button class="big ghost" data-a="go" data-v="notebook">📓 My mistakes notebook · ${S.notebook.filter(n => n.status === 'open').length} to beat</button>` : ''}
