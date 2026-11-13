@@ -1,0 +1,1814 @@
+<!DOCTYPE html>
+<!--
+=====================================================================
+  GRADE 5 TUTOR  —  single-file app (v1)
+=====================================================================
+  WHAT IT IS
+    A lesson app for one family on one iPad. Mom makes a lesson from a
+    topic, pasted text, or a worksheet (PDF or photo). The learner does a
+    30–35 minute session with explanations, worked examples, adaptive
+    practice, pencil-and-paper tasks, and a final check. Points add up
+    toward goals Mom sets.
+
+  HOW TO RUN IT
+    1. Put this one file on any web host (for example GitHub Pages) and
+       open the link in Safari on the iPad. Opening the file straight from
+       the Files app also works for a quick test.
+    2. In Safari, tap Share -> "Add to Home Screen", then always open it
+       from that icon. Do this BEFORE you start. iPad Safari can erase a
+       website's saved data after about 7 days without a visit; the
+       Home Screen app is safe from that. (The Home Screen app keeps its
+       own data, separate from the Safari tab.)
+    3. Tap "Mom", create a 4-digit PIN, and paste your Claude API key.
+
+  THE CLAUDE API KEY  (no key goes in this file)
+    - Get a key at https://console.anthropic.com -> API Keys. Add a small
+      amount of credit (a few dollars lasts a long time).
+    - Paste it in the app: Mom -> Settings -> Claude key. It is saved
+      only on this iPad, behind the Mom PIN. It is never in this file, so
+      sharing the link does not share your key.
+    - Tip: in the Anthropic console, set a monthly spend limit.
+
+  WHAT IT COSTS
+    Claude is only called when Mom makes a lesson (about 5–10 cents) and
+    when the learner taps "Explain it differently" (max 3 per lesson, a
+    fraction of a cent each). Practice, checking, feedback and pencil
+    tasks never call Claude.
+
+  WHERE DATA LIVES
+    Everything (lessons, progress, points, goals) is saved in this
+    browser on this iPad. Someone else opening the link sees an empty
+    app. Use Mom -> Settings -> "Save a backup" now and then; "Restore"
+    brings it back on any device.
+
+  CHANGING MODELS
+    See CONFIG just below the <script> tag. One line each.
+=====================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Learn">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#FFF7EE">
+<title>Grade 5 Tutor</title>
+<style>
+:root{
+  --bg:#FFF7EE; --card:#FFFFFF; --ink:#1F2340; --muted:#6B6F8A; --line:#ECE4DA;
+  --primary:#5B4BDB; --primary-ink:#fff; --primary-soft:#EEEBFF;
+  --accent:#FF8A3D; --accent-soft:#FFF0E5;
+  --good:#1F9D63; --good-soft:#E3F6EC; --soft:#C2410C; --soft-bg:#FFF1E8;
+  --danger:#C42B2B; --gold:#F5B700;
+  --r:22px; --shadow:0 6px 20px rgba(31,35,64,.08);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;padding:0;background:var(--bg);color:var(--ink)}
+body{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Rounded","Segoe UI",Roboto,Helvetica,Arial,sans-serif;font-size:18px;line-height:1.45;min-height:100vh;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+#app{max-width:820px;margin:0 auto;padding:16px 16px 60px}
+h1{font-size:30px;line-height:1.2;margin:.2em 0 .3em}
+h2{font-size:23px;line-height:1.25;margin:.3em 0}
+h3{font-size:16px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:22px 0 6px}
+p{margin:.4em 0 .8em}
+.muted{color:var(--muted)} small{font-size:14px}
+button{font:inherit;color:inherit;border:0;background:none;cursor:pointer;touch-action:manipulation}
+button:disabled{opacity:.45;cursor:default}
+input,textarea,select{font:inherit;font-size:18px;color:var(--ink);background:#fff;border:2px solid var(--line);border-radius:14px;padding:12px 14px;width:100%}
+input:focus,textarea:focus{outline:none;border-color:var(--primary)}
+textarea{min-height:140px;resize:vertical}
+label{display:block;font-weight:600;margin:14px 0 6px}
+.card{background:var(--card);border-radius:var(--r);padding:22px;box-shadow:var(--shadow);margin:14px 0}
+.big{display:block;width:100%;min-height:64px;border-radius:18px;font-size:22px;font-weight:700;padding:14px 18px;margin:12px 0;text-align:center}
+.primary{background:var(--primary);color:var(--primary-ink)}
+.secondary{background:var(--accent);color:#fff}
+.ghost{background:var(--primary-soft);color:var(--primary);font-weight:600;border-radius:14px;padding:12px 16px;min-height:48px}
+.ghost.danger{background:#FCEAEA;color:var(--danger)}
+.big.ghost{background:var(--primary-soft)}
+.link{color:var(--primary);text-decoration:underline;padding:8px 0;font-size:16px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.row>*{flex:1 1 auto}
+.chip{display:inline-block;background:var(--accent-soft);color:#9A4A12;font-size:14px;font-weight:700;border-radius:999px;padding:4px 12px}
+.chip.p{background:var(--primary-soft);color:var(--primary)}
+.chip.g{background:var(--good-soft);color:var(--good)}
+.topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:4px 0 8px}
+.topbar .who{font-weight:700;font-size:20px}
+.topbar button{background:#fff;border-radius:999px;padding:10px 16px;font-size:16px;font-weight:600;box-shadow:var(--shadow)}
+.center-screen{text-align:center;padding-top:6vh}
+.logo,.big-emoji{font-size:64px;line-height:1}
+.gate-btns{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:28px}
+.gate{background:#fff;border-radius:28px;box-shadow:var(--shadow);padding:30px 10px;font-size:26px;font-weight:800;display:flex;flex-direction:column;align-items:center;gap:8px;min-height:190px;justify-content:center}
+.gate span{font-size:64px}
+.gate.kid{background:var(--primary);color:#fff}
+.dots{display:flex;justify-content:center;gap:16px;margin:18px 0}
+.dots span{width:20px;height:20px;border-radius:50%;border:3px solid var(--primary)}
+.dots span.on{background:var(--primary)}
+.pad{display:grid;grid-template-columns:repeat(3,96px);gap:14px;justify-content:center;margin:10px auto}
+.pad button{height:80px;border-radius:20px;background:#fff;box-shadow:var(--shadow);font-size:30px;font-weight:700}
+.pad button.ghost{font-size:17px}
+.banner{background:var(--accent-soft);border-radius:16px;padding:14px 16px;margin:10px 0;display:flex;gap:12px;align-items:center}
+.banner p{margin:0;flex:1}
+.banner button{background:#fff;border-radius:12px;padding:10px 14px;font-weight:700;font-size:16px}
+.list{list-style:none;padding:0;margin:0}
+.item{display:flex;align-items:center;gap:12px;padding:14px 0;border-bottom:1px solid var(--line)}
+.item:last-child{border-bottom:0}
+.item .grow{flex:1;min-width:0}
+.item .t{font-weight:700}
+.item .s{font-size:15px;color:var(--muted)}
+.item button.sm{background:var(--primary-soft);color:var(--primary);border-radius:12px;padding:10px 14px;font-weight:700;font-size:15px;white-space:nowrap}
+.tabs{display:flex;gap:8px;background:#fff;border-radius:16px;padding:6px;box-shadow:var(--shadow);margin:10px 0}
+.tabs button{flex:1;padding:12px 6px;border-radius:12px;font-weight:700;font-size:16px;color:var(--muted)}
+.tabs button.on{background:var(--primary);color:#fff}
+.subjects{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.subjects button{background:#fff;border-radius:16px;padding:12px 4px;box-shadow:var(--shadow);font-weight:700;font-size:15px;border:3px solid transparent}
+.subjects button.on{border-color:var(--primary);color:var(--primary)}
+.subjects span{display:block;font-size:28px}
+.toggle{display:flex;gap:12px;align-items:center;font-weight:600;margin:14px 0}
+.toggle input{width:26px;height:26px;flex:none}
+.bar{height:16px;background:var(--line);border-radius:999px;overflow:hidden;margin:12px 0}
+.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--primary),var(--accent));border-radius:999px;transition:width .4s}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:10px 0}
+.stat{background:#fff;border-radius:18px;padding:14px 8px;text-align:center;box-shadow:var(--shadow);font-size:26px}
+.stat b{display:block;font-size:28px}
+.stat span{display:block;font-size:14px;color:var(--muted)}
+.goal .bar{height:22px}
+.today{border:3px solid var(--primary)}
+/* player */
+.playbar{display:flex;align-items:center;gap:12px;margin:0 0 10px}
+.playbar .x{width:44px;height:44px;border-radius:50%;background:#fff;box-shadow:var(--shadow);font-size:20px;flex:none}
+.playbar .bar{flex:1;margin:0}
+.playbar .mins{font-size:15px;color:var(--muted);white-space:nowrap}
+.step-label{font-size:15px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--accent)}
+.explain-text{font-size:25px;line-height:1.45;margin:14px 0}
+.visual{font-size:38px;line-height:1.3;text-align:center;background:var(--bg);border-radius:18px;padding:14px;margin:12px 0;word-break:break-word}
+.alt{background:var(--primary-soft);border-radius:16px;padding:14px 16px;margin:12px 0}
+.alt-h{font-weight:800;color:var(--primary);font-size:15px}
+.alt p{font-size:21px;margin:.3em 0 0}
+.steps{list-style:none;padding:0;counter-reset:s}
+.steps li{counter-increment:s;background:var(--bg);border-radius:14px;padding:12px 14px 12px 52px;margin:8px 0;position:relative;font-size:20px;animation:fadein .3s}
+.steps li:before{content:counter(s);position:absolute;left:12px;top:10px;width:30px;height:30px;border-radius:50%;background:var(--accent);color:#fff;font-weight:800;text-align:center;line-height:30px;font-size:16px}
+.answer-line{font-size:22px;font-weight:800;color:var(--good);margin:12px 0}
+.prompt{font-size:26px;line-height:1.35;margin:12px 0 16px}
+.qlabel{display:flex;justify-content:space-between;align-items:center}
+.tier{font-size:16px;color:var(--gold);letter-spacing:2px}
+.choices{display:grid;gap:12px}
+.choice{background:#fff;border:3px solid var(--line);border-radius:18px;min-height:64px;padding:12px 18px;font-size:22px;font-weight:700;text-align:left}
+.choice.right{border-color:var(--good);background:var(--good-soft)}
+.choice.wrong{border-color:var(--soft);background:var(--soft-bg)}
+.typed{min-height:70px;border:3px solid var(--line);border-radius:18px;background:#fff;font-size:34px;font-weight:800;display:flex;align-items:center;justify-content:center;padding:8px;margin-bottom:12px;letter-spacing:1px}
+.typed .ph{font-size:18px;color:var(--muted);font-weight:500;letter-spacing:0}
+.typed.right{border-color:var(--good);background:var(--good-soft)}
+.typed.wrong{border-color:var(--soft);background:var(--soft-bg)}
+.keypad{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.keypad button{height:66px;border-radius:16px;background:#fff;box-shadow:var(--shadow);font-size:28px;font-weight:700}
+.keypad button.k-check{background:var(--primary);color:#fff;font-size:22px}
+.keypad button.k-sm{font-size:17px}
+.order-pick{display:grid;gap:10px;margin:8px 0}
+.order-pick button{background:#fff;border:3px solid var(--line);border-radius:16px;padding:14px;font-size:20px;font-weight:700;text-align:left}
+.order-chosen{list-style:none;padding:0;margin:0 0 10px;counter-reset:o}
+.order-chosen li{counter-increment:o;background:var(--primary-soft);border-radius:14px;padding:10px 14px 10px 48px;margin:6px 0;position:relative;font-weight:700;font-size:19px}
+.order-chosen li:before{content:counter(o);position:absolute;left:12px;top:8px;width:28px;height:28px;border-radius:50%;background:var(--primary);color:#fff;text-align:center;line-height:28px;font-size:15px}
+.fb{border-radius:18px;padding:16px 18px;margin-top:16px;animation:fadein .25s}
+.cause{margin:12px 0 4px}
+.cause .ghost{padding:10px 12px;font-size:16px;background:#fff}
+.cause .ghost.on{background:var(--primary);color:#fff}
+.fb.good{background:var(--good-soft)}
+.fb.soft{background:var(--soft-bg)}
+.fb-h{font-size:24px;font-weight:800}
+.fb.good .fb-h{color:var(--good)} .fb.soft .fb-h{color:var(--soft)}
+.fb p{font-size:20px}
+.flag{display:block;margin:16px auto 0;color:var(--muted);font-size:15px;padding:8px}
+.passage p{font-size:21px;line-height:1.6;margin:.5em 0}
+.psg{background:var(--bg);border-radius:14px;padding:10px 14px;margin:0 0 14px}
+.psg summary{font-weight:700;color:var(--primary);cursor:pointer}
+.problems{font-size:24px;line-height:1.6;padding-left:30px}
+.problems li{margin:6px 0}
+.selfscore{display:flex;gap:10px;flex-wrap:wrap;justify-content:center}
+.selfscore button{width:72px;height:72px;border-radius:50%;background:#fff;box-shadow:var(--shadow);font-size:28px;font-weight:800}
+.reward .badge{font-size:120px;line-height:1;display:inline-block}
+.pop{animation:pop .9s cubic-bezier(.2,1.6,.4,1) both}
+.big-points{font-size:44px;font-weight:900;color:var(--primary);margin:6px 0}
+.breakdown{list-style:none;padding:0;max-width:420px;margin:10px auto;text-align:left}
+.breakdown li{display:flex;justify-content:space-between;padding:8px 4px;border-bottom:1px dashed var(--line);font-size:18px}
+.confetti{position:fixed;top:-20px;font-size:26px;animation:fall linear forwards;pointer-events:none;z-index:5}
+.spin{display:inline-block;animation:wiggle 1.2s ease-in-out infinite}
+#toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%) translateY(120px);background:var(--ink);color:#fff;border-radius:14px;padding:14px 20px;font-size:17px;max-width:90vw;transition:transform .3s;z-index:10;text-align:center}
+#toast.show{transform:translateX(-50%) translateY(0)}
+.qedit{border-top:1px solid var(--line);padding:12px 0}
+.qedit textarea{min-height:70px}
+.kv{display:grid;grid-template-columns:1fr auto;gap:6px 12px;font-size:17px}
+.kv b{text-align:right}
+@keyframes pop{0%{transform:scale(0) rotate(-20deg)}100%{transform:scale(1) rotate(0)}}
+@keyframes fall{to{transform:translateY(110vh) rotate(540deg)}}
+@keyframes wiggle{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(12deg)}}
+@keyframes fadein{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+@media (max-width:560px){
+  .pad{grid-template-columns:repeat(3,80px)}
+  .subjects{grid-template-columns:repeat(2,1fr)}
+  .explain-text{font-size:21px} .prompt{font-size:22px}
+  h1{font-size:26px}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast"></div>
+<script>
+'use strict';
+/* ==================================================================
+   CONFIG  (the only part you might want to change)
+   ================================================================== */
+const CONFIG = {
+  // Model that writes lessons. Accuracy matters here (answer keys).
+  // Cheaper option: 'claude-haiku-5-5' (about 1/20th the cost, more answer-key mistakes).
+  AUTHOR_MODEL: 'claude-sonnet-5-5',
+  AUTHOR_EFFORT: 'low',          // 'low' is fast. 'medium' thinks more (slower, a bit more accurate).
+  // Model for the "Explain it differently" button.
+  EXPLAIN_MODEL: 'claude-haiku-5-5',
+  EXPLAIN_CAP: 3,                // max "explain differently" taps per lesson
+  API_URL: 'https://api.anthropic.com/v1/messages',
+  POINTS: { lessonBase: 100, perCorrect: 5, streakBonus: 50, streakEvery: 3, perfectCheck: 50 },
+  DEFAULT_RATE: 100,             // points per $1 (Mom can change this in Rewards)
+  STORAGE_KEY: 'g5tutor.v1',
+  VERSION: 'v4 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
+};
+// NOTE: there is deliberately no API key here. Mom pastes it in Settings.
+
+/* ==================================================================
+   Helpers
+   ================================================================== */
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const uid = () => Math.random().toString(36).slice(2, 9) + Date.now().toString(36).slice(-4);
+const str = v => (v == null ? '' : String(v)).trim();
+const arr = v => Array.isArray(v) ? v : [];
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const pick = a => a[Math.floor(Math.random() * a.length)];
+const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const todayStr = (d = new Date()) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+const addDays = (s, n) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return todayStr(d); };
+const money = n => '$' + (Math.round(n * 100) / 100).toFixed(2);
+const fmtDate = t => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+const gcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) [a, b] = [b, a % b]; return a; };
+const near = (x, y) => Math.abs(x - y) <= 1e-6 * Math.max(1, Math.abs(x), Math.abs(y));
+const isStandalone = () => navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+function setPath(obj, path, val) { const ks = path.split('.'); let o = obj; for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]]; o[ks[ks.length - 1]] = val; }
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 3200); }
+function hashPin(p) { let h = 2166136261; for (const c of 'g5-tutor:' + p) { h ^= c.charCodeAt(0); h = Math.imul(h, 16777619); } return (h >>> 0).toString(16); }
+
+const SUBJECTS = {
+  math:     { label: 'Math', emoji: '🔢', curriculum: 'The Ontario Curriculum, Grades 1–8: Mathematics (2020)' },
+  science:  { label: 'Science', emoji: '🔬', curriculum: 'The Ontario Curriculum, Grades 1–8: Science and Technology (2022)' },
+  social:   { label: 'Social Studies', emoji: '🗺️', curriculum: 'The Ontario Curriculum: Social Studies, Grades 1 to 6; History and Geography, Grades 7 and 8 (2023)' },
+  literacy: { label: 'Literacy', emoji: '📖', curriculum: 'The Ontario Curriculum, Grades 1–8: Language (2023)' },
+};
+
+/* ==================================================================
+   ONTARIO GRADE 5 CURRICULUM MAP
+   Codes are the official expectation codes. Text is a short plain-language
+   summary, not the official wording (see dcp.edu.gov.on.ca for that).
+   Math and Social Studies: every Grade 5 specific expectation.
+   Science and Language: the overall expectations per strand (specific codes
+   to be added). Lessons and questions are tagged with these codes.
+   ================================================================== */
+const CURRICULUM = {
+  math: { level: 'specific', strands: [
+    { code: 'B', name: 'Number', items: [
+      ['B1.1', 'Read, represent, compose and decompose whole numbers up to 100 000'],
+      ['B1.2', 'Compare and order whole numbers up to 100 000'],
+      ['B1.3', 'Equivalent fractions from halves to twelfths, incl. improper fractions and mixed numbers'],
+      ['B1.4', 'Compare and order fractions from halves to twelfths'],
+      ['B1.5', 'Read, represent, compare and order decimals to hundredths'],
+      ['B1.6', 'Round decimals to the nearest tenth'],
+      ['B1.7', 'Relate fractions, decimals to hundredths, and whole-number percents'],
+      ['B2.1', 'Use properties of operations to solve multi-step problems with whole numbers and decimals'],
+      ['B2.2', 'Recall multiplication facts to 12 × 12 and related division facts'],
+      ['B2.3', 'Mental math: multiply by 0.1 and 0.01; estimate decimal sums and differences'],
+      ['B2.4', 'Add and subtract whole numbers to 100 000 and decimals to hundredths'],
+      ['B2.5', 'Add and subtract fractions with like denominators'],
+      ['B2.6', 'Multiply two-digit by two-digit whole numbers (area model and algorithm)'],
+      ['B2.7', 'Divide three-digit by two-digit whole numbers; express remainders'],
+      ['B2.8', 'Multiply and divide one-digit whole numbers by unit fractions'],
+      ['B2.9', 'Equivalent ratios and rates'] ] },
+    { code: 'C', name: 'Algebra', items: [
+      ['C1.1', 'Identify and describe repeating, growing and shrinking patterns'],
+      ['C1.2', 'Create and translate growing and shrinking patterns (tables of values, graphs)'],
+      ['C1.3', 'Pattern rules: extend, predict, find missing elements'],
+      ['C1.4', 'Patterns with whole numbers and decimal tenths and hundredths'],
+      ['C2.1', 'Translate among words, algebraic expressions and visual representations'],
+      ['C2.2', 'Evaluate algebraic expressions with whole numbers'],
+      ['C2.3', 'Solve equations with whole numbers up to 100'],
+      ['C2.4', 'Solve one-operation inequalities with whole numbers up to 50; graph solutions'],
+      ['C3.1', 'Coding: write and run code with conditionals and other control structures'],
+      ['C3.2', 'Coding: read and alter existing code and describe how changes affect outcomes'],
+      ['C4.1', 'Mathematical modelling of real-life situations'] ] },
+    { code: 'D', name: 'Data', items: [
+      ['D1.1', 'Why sampling techniques matter for a representative sample'],
+      ['D1.2', 'Collect data with sampling; relative-frequency tables'],
+      ['D1.3', 'Choose the best graph (incl. stacked-bar) and label it properly'],
+      ['D1.4', 'Create an infographic about a data set'],
+      ['D1.5', 'Mean, median and mode'],
+      ['D1.6', 'Analyse data, incl. misleading graphs, and draw conclusions'],
+      ['D2.1', 'Probability as fractions on a probability line'],
+      ['D2.2', 'Theoretical vs experimental probability'] ] },
+    { code: 'E', name: 'Spatial Sense', items: [
+      ['E1.1', 'Properties of triangles; construct triangles from sides or angles'],
+      ['E1.2', 'Congruent triangles, rectangles and parallelograms'],
+      ['E1.3', 'Top, front and side views of objects'],
+      ['E1.4', 'Coordinates in the first quadrant; translations between points'],
+      ['E1.5', 'Translations, reflections and rotations up to 180° on a grid'],
+      ['E2.1', 'Estimate and measure length, area, mass and capacity in metric units'],
+      ['E2.2', 'Convert larger metric units to smaller ones'],
+      ['E2.3', 'Compare angles by size'],
+      ['E2.4', 'Use a protractor to measure and construct angles up to 180°; benchmark angles'],
+      ['E2.5', 'Area formulas for rectangles, parallelograms and triangles'],
+      ['E2.6', 'Same area, different perimeters'] ] },
+    { code: 'F', name: 'Financial Literacy', items: [
+      ['F1.1', 'Ways money is transferred among people, organizations and businesses'],
+      ['F1.2', 'Cost of multi-item purchases, incl. sales tax'],
+      ['F1.3', 'Simple budgets for earning and spending'],
+      ['F1.4', 'Credit and debt'],
+      ['F1.5', 'Unit rates and best value'],
+      ['F1.6', 'Taxes collected by each level of government and what they pay for'] ] },
+  ] },
+  science: { level: 'overall', strands: [
+    { code: 'A', name: 'STEM Skills and Connections', items: [
+      ['A1', 'Scientific research and experimentation, engineering design, and communicating findings'],
+      ['A2', 'Coding and emerging technologies in STEM'],
+      ['A3', 'STEM careers and contributions of diverse people and communities'] ] },
+    { code: 'B', name: 'Life Systems: Human Organ Systems', items: [
+      ['B1', 'How our choices and technology affect human health and organ systems'],
+      ['B2', 'Structure and function of human organ systems and how they work together'] ] },
+    { code: 'C', name: 'Matter and Energy: Properties of and Changes in Matter', items: [
+      ['C1', 'Impacts of changes in matter on society and the environment'],
+      ['C2', 'Properties of matter, changes of state, physical and chemical changes'] ] },
+    { code: 'D', name: 'Structures and Mechanisms: Forces Acting on Structures', items: [
+      ['D1', 'How forces affect structures, people and the environment'],
+      ['D2', 'Internal and external forces acting on structures and how structures withstand them'] ] },
+    { code: 'E', name: 'Earth and Space Systems: Conservation of Energy and Resources', items: [
+      ['E1', 'Effects of energy and resource use on society and the environment; ways to conserve'],
+      ['E2', 'Forms and sources of energy, how energy is transformed, and conservation'] ] },
+  ] },
+  literacy: { level: 'overall', strands: [
+    { code: 'A', name: 'Literacy Connections and Applications', items: [
+      ['A1', 'Transferable skills through language learning'],
+      ['A2', 'Digital media literacy'],
+      ['A3', 'Applications, connections and contributions (incl. diverse voices)'] ] },
+    { code: 'B', name: 'Foundations of Language', items: [
+      ['B1', 'Oral and non-verbal communication'],
+      ['B2', 'Language foundations for reading and writing (word study, spelling, vocabulary, morphology)'],
+      ['B3', 'Language conventions for reading and writing (grammar, sentences, punctuation)'] ] },
+    { code: 'C', name: 'Comprehension', items: [
+      ['C1', 'Knowledge about texts (forms, genres, text features)'],
+      ['C2', 'Comprehension strategies (predict, infer, summarize, main idea)'],
+      ['C3', 'Critical thinking in literacy (perspective, bias, evaluating texts)'] ] },
+    { code: 'D', name: 'Composition', items: [
+      ['D1', 'Developing ideas and organizing content'],
+      ['D2', 'Creating texts (voice, word choice, sentence fluency)'],
+      ['D3', 'Publishing, presenting and reflecting (revising, editing)'] ] },
+  ] },
+  social: { level: 'specific', strands: [
+    { code: 'A', name: 'Heritage and Identity: Interactions of Indigenous Peoples and Europeans prior to 1713', items: [
+      ['A1.1', 'Positive and negative consequences of contact between Indigenous peoples and Europeans'],
+      ['A1.2', 'How different groups were affected by contact'],
+      ['A1.3', 'Connections between these interactions and issues in Canada today'],
+      ['A2.1', 'Ask inquiry questions from the perspectives of the groups involved'],
+      ['A2.2', 'Gather and organize information from primary and secondary sources'],
+      ['A2.3', 'Analyse and construct maps'],
+      ['A2.4', 'Interpret and analyse evidence'],
+      ['A2.5', 'Evaluate evidence and draw conclusions about perspectives'],
+      ['A2.6', 'Communicate findings with the right vocabulary'],
+      ['A3.1', 'Major Indigenous nations in contact with Europeans before 1713'],
+      ['A3.2', 'Interactions among First Nations, and between First Nations and Inuit, before contact'],
+      ['A3.3', 'Why Europeans explored and set up permanent settlements'],
+      ['A3.4', 'Offices and institutions of New France'],
+      ['A3.5', 'Interactions between Indigenous peoples and European explorers and settlers'],
+      ['A3.6', 'Origins of the Métis (Great Lakes and Mattawa regions)'],
+      ['A3.7', 'Differences among Indigenous peoples, and between Indigenous and European communities'],
+      ['A3.8', 'Effects of European conflicts on Indigenous peoples'] ] },
+    { code: 'B', name: 'People and Environments: The Role of Government and Responsible Citizenship', items: [
+      ['B1.1', 'How well government actions address an issue'],
+      ['B1.2', 'Plan of action for a social issue'],
+      ['B1.3', 'Plan of action for an environmental issue'],
+      ['B2.1', 'Ask questions about social or environmental issues from different perspectives'],
+      ['B2.2', 'Gather and organize information on these issues'],
+      ['B2.3', 'Analyse and construct maps'],
+      ['B2.4', 'Interpret and analyse information and data'],
+      ['B2.5', 'Evaluate evidence; strengths and weaknesses of perspectives'],
+      ['B2.6', 'Communicate findings with the right vocabulary'],
+      ['B3.1', 'Rights and responsibilities of citizenship in Canada'],
+      ['B3.2', 'Levels of government, their jurisdictions and services'],
+      ['B3.3', 'First Nations, Métis and Inuit governance today'],
+      ['B3.4', 'Shared responsibilities across levels of government'],
+      ['B3.5', 'How governments gather public input'],
+      ['B3.6', 'Duty to consult and accommodate Indigenous communities'],
+      ['B3.7', 'Government actions on significant issues'],
+      ['B3.8', 'Why groups hold different perspectives on issues'],
+      ['B3.9', 'How citizens can take action on social and environmental issues'] ] },
+  ] },
+};
+const EXP_INDEX = {};
+Object.entries(CURRICULUM).forEach(([subj, c]) => { EXP_INDEX[subj] = {}; c.strands.forEach(st => st.items.forEach(([code, text]) => { EXP_INDEX[subj][code] = { text, strand: st }; })); });
+const expText = (subj, code) => (EXP_INDEX[subj] && EXP_INDEX[subj][code] || {}).text || '';
+/* Map whatever code Claude gives onto a code in our list (e.g. science "B2.3" -> "B2"). Unknown codes are dropped. */
+function matchCode(subj, raw) {
+  const ix = EXP_INDEX[subj] || {}, c = str(raw).toUpperCase().replace(/\s+/g, '').replace(/^([A-F]\d+(?:\.\d+)?).*$/, '$1');
+  if (ix[c]) return c;
+  const ov = c.split('.')[0];
+  return ix[ov] ? ov : '';
+}
+function expListText(subj) {
+  const c = CURRICULUM[subj];
+  return 'Grade 5 expectations (' + (c.level === 'overall' ? 'overall expectations; tag with these codes' : 'specific expectations') + '). Tag ONLY with codes from this list:\n' +
+    c.strands.map(st => st.items.map(([k, t]) => `${k}: ${t}`).join('\n')).join('\n');
+}
+
+/* ==================================================================
+   State (saved in localStorage on this device)
+   ================================================================== */
+const DEFAULT_STATE = () => ({
+  version: 1,
+  settings: { pin: null, apiKey: '', learnerName: '', rate: CONFIG.DEFAULT_RATE, welcomed: false, lastExport: 0, createdAt: Date.now() },
+  lessons: {}, order: [], sequences: {},
+  todayLessonId: null, attempt: null,
+  results: [], review: [], flags: [], notebook: [],
+  points: { balance: 0, earned: 0, log: [] },
+  streak: { count: 0, last: null, best: 0 },
+  goals: [], redeemables: [],
+});
+let S;
+function load() {
+  try {
+    const raw = localStorage.getItem(CONFIG.STORAGE_KEY);
+    const d = raw ? JSON.parse(raw) : {};
+    S = Object.assign(DEFAULT_STATE(), d);
+    S.settings = Object.assign(DEFAULT_STATE().settings, d.settings || {});
+    S.points = Object.assign(DEFAULT_STATE().points, d.points || {});
+    S.streak = Object.assign(DEFAULT_STATE().streak, d.streak || {});
+  } catch (e) { S = DEFAULT_STATE(); }
+}
+function save() {
+  try { localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(S)); }
+  catch (e) { toast('The iPad storage for this app is full. Save a backup, then delete old lessons.'); }
+}
+const kidName = () => S.settings.learnerName || 'Learner';
+
+/* ==================================================================
+   Router + event wiring
+   ================================================================== */
+let view = { name: 'gate', p: {} };
+let role = null;           // 'mom' | 'kid' (not saved; reload returns to the gate)
+let TIMER = null;
+const VIEWS = {}, A = {};
+const MOM_VIEWS = ['curriculum', 'momHome', 'newLesson', 'generating', 'summary', 'edit', 'results', 'result', 'flags', 'rewards', 'settings', 'welcome'];
+function go(name, p = {}) { view = { name, p }; render(); window.scrollTo(0, 0); }
+function render() {
+  if (MOM_VIEWS.includes(view.name) && role !== 'mom') view = { name: 'gate', p: {} };
+  clearInterval(TIMER); TIMER = null;
+  document.querySelectorAll('.confetti').forEach(e => e.remove());
+  $('#app').innerHTML = VIEWS[view.name](view.p);
+  if (VIEWS[view.name].after) VIEWS[view.name].after(view.p);
+}
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-a]');
+  if (!el || el.disabled) return;
+  const fn = A[el.dataset.a];
+  if (fn) { e.preventDefault(); fn(el.dataset.v, el, e); }
+});
+const FORMS = {};
+document.addEventListener('input', e => {
+  const b = e.target.dataset.bind; if (!b) return;
+  const [form, path] = b.split(':');
+  setPath(FORMS[form], path, e.target.type === 'checkbox' ? e.target.checked : e.target.value);
+});
+document.addEventListener('change', e => {
+  const t = e.target;
+  if (t.dataset.bind && t.type === 'checkbox') { const [f, p] = t.dataset.bind.split(':'); setPath(FORMS[f], p, t.checked); }
+  if (t.id === 'lessonFile') onLessonFile(t.files[0]);
+  if (t.id === 'importFile' && t.files[0]) importData(t.files[0]);
+});
+document.addEventListener('keydown', e => {
+  if (view.name !== 'play') return;
+  if (e.target.id === 'shortIn' && e.key === 'Enter') { e.preventDefault(); A.answerShort(); return; }
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  if ($('#typed')) {
+    if (/^[0-9./]$/.test(e.key)) A.key(e.key);
+    else if (e.key === ' ') { e.preventDefault(); A.key('sp'); }
+    else if (e.key === 'Backspace') A.key('del');
+    else if (e.key === 'Enter') A.key('ok');
+  }
+});
+A.go = v => go(v);
+
+/* ==================================================================
+   Gate + PIN
+   ================================================================== */
+VIEWS.gate = () => `
+<div class="center-screen">
+  <div class="logo">⭐</div>
+  <h1>Who's using this?</h1>
+  <div class="gate-btns">
+    <button class="gate mom" data-a="pickMom"><span>👩</span>Mom</button>
+    <button class="gate kid" data-a="pickKid"><span>🧒</span>${esc(kidName())}</button>
+  </div>
+  <p class="muted" style="margin-top:36px"><small>${esc(CONFIG.VERSION)}</small></p>
+</div>`;
+A.pickKid = () => { role = 'kid'; go('kidHome'); };
+A.pickMom = () => { pinBuf = ''; go('pin', { mode: S.settings.pin ? 'enter' : 'set1' }); };
+
+let pinBuf = '', pinFirst = '';
+VIEWS.pin = p => `
+<div class="center-screen">
+  <div class="logo">🔒</div>
+  <h1>${p.mode === 'enter' ? 'Mom PIN' : p.mode === 'set1' ? 'Create a 4-digit PIN' : 'Type it again'}</h1>
+  <p class="muted">${esc(p.msg || (p.mode === 'enter' ? '' : 'This keeps lessons and rewards grown-ups only.'))}</p>
+  <div class="dots">${[0, 1, 2, 3].map(i => `<span class="${i < pinBuf.length ? 'on' : ''}"></span>`).join('')}</div>
+  <div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-a="pinKey" data-v="${n}">${n}</button>`).join('')}
+    <button class="ghost" data-a="pinBack">Back</button><button data-a="pinKey" data-v="0">0</button><button data-a="pinDel">⌫</button></div>
+  ${p.mode === 'enter' ? `<button class="link" data-a="go" data-v="forgot">Forgot PIN?</button>` : ''}
+</div>`;
+A.pinBack = () => { pinBuf = ''; go(view.p.change ? 'settings' : 'gate'); };
+A.pinDel = () => { pinBuf = pinBuf.slice(0, -1); render(); };
+A.pinKey = v => {
+  if (pinBuf.length >= 4) return;
+  pinBuf += v; render();
+  if (pinBuf.length < 4) return;
+  const p = view.p, entered = pinBuf; pinBuf = '';
+  setTimeout(() => {
+    if (p.mode === 'enter') {
+      if (hashPin(entered) === S.settings.pin) { role = 'mom'; go(S.settings.welcomed ? 'momHome' : 'welcome'); pumpSequences(); }
+      else go('pin', { mode: 'enter', msg: 'That PIN didn’t match. Try again.' });
+    } else if (p.mode === 'set1') { pinFirst = entered; go('pin', { mode: 'set2', change: p.change }); }
+    else {
+      if (entered === pinFirst) {
+        S.settings.pin = hashPin(entered); save(); role = 'mom';
+        if (p.change) { toast('PIN changed.'); go('settings'); } else go(S.settings.welcomed ? 'momHome' : 'welcome');
+      } else go('pin', { mode: 'set1', change: p.change, msg: 'Those didn’t match. Let’s try again.' });
+    }
+  }, 150);
+};
+VIEWS.forgot = () => `
+<div class="center-screen" style="text-align:left">
+  <h1>Reset the PIN</h1>
+  ${S.settings.apiKey
+    ? `<p>To prove you're a grown-up, paste the Claude API key saved in this app (from console.anthropic.com).</p>
+       <input id="forgotKey" type="password" autocomplete="off" placeholder="sk-ant-...">
+       <button class="big primary" data-a="forgotReset">Reset PIN</button>`
+    : `<p>No Claude key is saved yet, so you can just make a new PIN.</p><button class="big primary" data-a="forgotReset">Make a new PIN</button>`}
+  <button class="big ghost" data-a="go" data-v="gate">Back</button>
+</div>`;
+A.forgotReset = () => {
+  if (S.settings.apiKey && str($('#forgotKey').value) !== S.settings.apiKey) { toast('That key doesn’t match.'); return; }
+  S.settings.pin = null; save(); pinBuf = ''; go('pin', { mode: 'set1' });
+};
+
+/* ==================================================================
+   Mom: first-run welcome
+   ================================================================== */
+VIEWS.welcome = () => {
+  FORMS.W = { name: S.settings.learnerName, key: '' };
+  return `
+<div class="topbar"><span class="who">👋 Welcome</span></div>
+<div class="card">
+  <h1>Two quick things</h1>
+  <p class="muted">One time only.</p>
+  <label>Your daughter's first name</label>
+  <input data-bind="W:name" value="${esc(S.settings.learnerName)}" placeholder="First name" autocomplete="off">
+  <label>Your Claude API key</label>
+  <input data-bind="W:key" type="password" placeholder="sk-ant-..." autocomplete="off">
+  <p class="muted"><small>Get one at console.anthropic.com → API Keys. It is saved only on this iPad, behind your PIN.</small></p>
+  ${!isStandalone() ? `<div class="banner"><p>📲 <b>Tip:</b> tap Share → <b>Add to Home Screen</b> and use the app from that icon. It keeps progress from being erased.</p></div>` : ''}
+  <button class="big primary" data-a="welcomeSave">Save</button>
+  <button class="link" data-a="welcomeSkip">Skip for now</button>
+</div>`;
+};
+A.welcomeSave = () => {
+  S.settings.learnerName = str(FORMS.W.name);
+  if (str(FORMS.W.key)) S.settings.apiKey = cleanKey(FORMS.W.key);
+  S.settings.welcomed = true; save(); go('momHome');
+};
+A.welcomeSkip = () => { S.settings.welcomed = true; save(); go('momHome'); };
+
+/* ==================================================================
+   Mom: home
+   ================================================================== */
+const subjChip = s => `<span class="chip">${SUBJECTS[s]?.emoji || ''} ${esc(SUBJECTS[s]?.label || s)}</span>`;
+function lessonStatus(L) {
+  if (S.todayLessonId === L.id) return '<span class="chip p">Today</span>';
+  if (L.status === 'done') return '<span class="chip g">Done ✓</span>';
+  return '<span class="chip">Ready</span>';
+}
+VIEWS.momHome = () => {
+  const pend = S.results.filter(r => !r.accepted);
+  const flags = S.flags.filter(f => f.status === 'open');
+  const needBackup = S.results.length > 0 && Date.now() - (S.settings.lastExport || 0) > 14 * 864e5;
+  const writing = [];
+  Object.values(S.sequences).forEach(seq => seq.lessons.forEach((e, k) => { if (!e.lessonId && e.status !== 'deleted') writing.push({ seq, e, k }); }));
+  return `
+<div class="topbar"><span class="who">👩 Mom</span><button data-a="switchUser">Switch user</button></div>
+${!S.settings.apiKey ? `<div class="banner"><p>Add your Claude key to make lessons.</p><button data-a="go" data-v="settings">Add key</button></div>` : ''}
+${needBackup ? `<div class="banner"><p>💾 It’s been a while. Save a backup of ${esc(kidName())}'s progress?</p><button data-a="exportData">Save backup</button></div>` : ''}
+<button class="big primary" data-a="newLesson">＋ New lesson</button>
+${GEN && GEN.status === 'running' ? `<div class="card" data-a="go" data-v="generating" style="cursor:pointer"><b>✏️ Writing a lesson…</b> <span class="muted">tap to see</span></div>` : ''}
+${pend.length ? `<h3>Results to check</h3><div class="card"><ul class="list">${pend.map(r => `
+  <li class="item"><div class="grow"><div class="t">${esc(r.title)}</div><div class="s">${fmtDate(r.at)} · ${r.mastery}% on the check · ${r.minutes} min</div></div>
+  <button class="sm" data-a="openResult" data-v="${r.id}">View</button><button class="sm" data-a="acceptResult" data-v="${r.id}">Accept</button></li>`).join('')}</ul></div>` : ''}
+${flags.length ? `<button class="big ghost" data-a="go" data-v="flags">🚩 ${flags.length} question${flags.length > 1 ? 's' : ''} ${esc(kidName())} flagged</button>` : ''}
+<h3>Lessons</h3>
+<div class="card">${S.order.length || writing.length ? `<ul class="list">
+  ${writing.map(w => `<li class="item"><div class="grow"><div class="t">${esc(w.e.title)}</div><div class="s">Lesson ${w.k + 1} of ${w.seq.lessons.length} · ${w.e.status === 'error' ? 'will retry soon' : 'being written…'}</div></div></li>`).join('')}
+  ${S.order.slice(0, 30).map(id => S.lessons[id]).filter(Boolean).map(L => `
+  <li class="item"><div class="grow"><div class="t">${esc(L.meta.title)}</div><div class="s">${esc(SUBJECTS[L.meta.subject]?.label || '')}${L.meta.sequenceTotal > 1 ? ` · ${L.meta.sequencePosition} of ${L.meta.sequenceTotal}` : ''} · ${fmtDate(L.createdAt)}</div></div>
+  ${lessonStatus(L)}<button class="sm" data-a="openSummary" data-v="${L.id}">Open</button></li>`).join('')}</ul>`
+    : `<p class="muted">No lessons yet. Tap “New lesson” and type a topic like “Multiplying fractions”.</p>`}</div>
+<div class="row"><button class="big ghost" data-a="go" data-v="curriculum">📚 Curriculum</button><button class="big ghost" data-a="go" data-v="results">📊 All results</button><button class="big ghost" data-a="go" data-v="rewards">🎁 Rewards</button><button class="big ghost" data-a="go" data-v="settings">⚙️ Settings</button></div>`;
+};
+A.switchUser = () => { role = null; go('gate'); };
+A.openSummary = id => go('summary', { id });
+
+/* ==================================================================
+   Mom: new lesson
+   ================================================================== */
+FORMS.NL = { subject: 'math', mode: 'topic', topic: '', text: '', file: null, fileName: '', split: true };
+VIEWS.newLesson = () => {
+  const N = FORMS.NL;
+  return `
+<div class="topbar"><button data-a="go" data-v="momHome">← Back</button><span class="who">New lesson</span><span></span></div>
+<div class="subjects">${Object.entries(SUBJECTS).map(([k, s]) => `<button class="${N.subject === k ? 'on' : ''}" data-a="nlSubject" data-v="${k}"><span>${s.emoji}</span>${s.label}</button>`).join('')}</div>
+<div class="tabs">
+  <button class="${N.mode === 'topic' ? 'on' : ''}" data-a="nlMode" data-v="topic">Topic</button>
+  <button class="${N.mode === 'text' ? 'on' : ''}" data-a="nlMode" data-v="text">Paste text</button>
+  <button class="${N.mode === 'file' ? 'on' : ''}" data-a="nlMode" data-v="file">PDF / photo</button>
+</div>
+<div class="card">
+  ${N.expCode && N.expSubject === N.subject ? `<div class="banner"><p>🎯 Targets <b>${esc(N.expCode)}</b>: ${esc(expText(N.subject, N.expCode))}</p><button data-a="nlClearExp">✕</button></div>` : `<button class="link" data-a="go" data-v="curriculum">📚 Or pick from the Grade 5 curriculum</button>`}
+  ${N.mode === 'topic' ? `<label>What is she learning?</label><input data-bind="NL:topic" value="${esc(N.topic)}" placeholder="e.g. Multiplying fractions" autocomplete="off" id="nlTopic">` : ''}
+  ${N.mode === 'text' ? `<label>Paste the worksheet or notes</label><textarea data-bind="NL:text" placeholder="Paste anything: worksheet text, the teacher's note, a list of questions…">${esc(N.text)}</textarea>` : ''}
+  ${N.mode === 'file' ? `<label>Choose a PDF or take a photo of the worksheet</label>
+     <input id="lessonFile" type="file" accept="application/pdf,image/*">
+     ${N.fileName ? `<p class="muted">📎 ${esc(N.fileName)}</p>` : ''}` : ''}
+  <label class="toggle"><input type="checkbox" data-bind="NL:split" ${N.split ? 'checked' : ''}> Split big topics into 2–3 lessons</label>
+  <button class="big primary" data-a="generate">Make the lesson</button>
+  <p class="muted" style="text-align:center"><small>Takes about a minute.</small></p>
+</div>`;
+};
+VIEWS.newLesson.after = () => { const t = $('#nlTopic'); if (t && !FORMS.NL.topic) t.focus(); };
+A.newLesson = () => { if (!S.settings.apiKey) { toast('First add your Claude key in Settings.'); go('settings'); return; } if (GEN && GEN.status === 'running') { go('generating'); return; } go('newLesson'); };
+A.nlSubject = v => { FORMS.NL.subject = v; render(); };
+A.nlClearExp = () => { FORMS.NL.expCode = ''; render(); };
+A.nlMode = v => { FORMS.NL.mode = v; render(); };
+function onLessonFile(f) {
+  if (!f) return;
+  const N = FORMS.NL;
+  if (f.type === 'application/pdf') {
+    if (f.size > 25 * 1024 * 1024) { toast('That PDF is too big (over 25 MB).'); return; }
+    const r = new FileReader();
+    r.onload = () => { N.file = { kind: 'pdf', data: String(r.result).split(',')[1] }; N.fileName = f.name; render(); };
+    r.readAsDataURL(f);
+  } else if (f.type.startsWith('image/')) {
+    const img = new Image(), url = URL.createObjectURL(f);
+    img.onload = () => {
+      const max = 1600, sc = Math.min(1, max / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * sc); c.height = Math.round(img.height * sc);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      N.file = { kind: 'image', data: c.toDataURL('image/jpeg', 0.85).split(',')[1] }; N.fileName = f.name || 'Photo';
+      URL.revokeObjectURL(url); render();
+    };
+    img.onerror = () => toast('Couldn’t open that picture. Try a PDF or paste the text.');
+    img.src = url;
+  } else toast('Please choose a PDF or a photo.');
+}
+A.generate = () => {
+  const N = FORMS.NL;
+  if (N.mode === 'topic' && !str(N.topic)) { toast('Type a topic first.'); return; }
+  if (N.mode === 'text' && str(N.text).length < 10) { toast('Paste some text first.'); return; }
+  if (N.mode === 'file' && !N.file) { toast('Choose a PDF or photo first.'); return; }
+  startGen({ subject: N.subject, expCode: N.expCode && N.expSubject === N.subject ? N.expCode : '', mode: N.mode, topic: str(N.topic), text: str(N.text).slice(0, 30000), file: N.mode === 'file' ? N.file : null, split: N.split });
+};
+
+/* ==================================================================
+   Claude API (browser-direct). Only used for authoring + "explain differently".
+   ================================================================== */
+const cleanKey = k => String(k || '').replace(/[^\x21-\x7E]/g, '');
+async function callClaude({ model, system, content, maxTokens = 20000, effort, onProgress, signal }) {
+  const key = cleanKey(S.settings.apiKey);
+  if (!key) throw new Error('NO_KEY');
+  const body = { model, max_tokens: maxTokens, stream: true, system, messages: [{ role: 'user', content }] };
+  if (effort) body.output_config = { effort };
+  let res;
+  try {
+    res = await fetch(CONFIG.API_URL, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01', 'anthropic-dangerous-direct-browser-access': 'true' },
+      body: JSON.stringify(body),
+    });
+  } catch (e) { if (signal && signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' }); const err = new Error('NETWORK'); err.detail = (e.name || 'Error') + ': ' + (e.message || ''); throw err; }
+  if (signal && signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' });
+  if (!res.ok) {
+    let msg = ''; try { msg = (await res.json()).error?.message || ''; } catch (_) {}
+    const err = new Error('HTTP_' + res.status); err.detail = msg; err.status = res.status; throw err;
+  }
+  const reader = res.body && res.body.getReader ? res.body.getReader() : null, dec = new TextDecoder();
+  let buf = '', text = '', stop = null;
+  for (;;) {
+    if (!reader) { try { buf = await res.text(); } catch (e) { const err = new Error('NETWORK'); err.detail = 'Reply could not be read (' + (e.message || e.name) + ')'; throw err; } buf += '\n'; }
+    else {
+    let chunk;
+    try { chunk = await reader.read(); } catch (e) { const err = new Error('NETWORK'); err.detail = 'Connection dropped while writing (' + (e.message || e.name) + ')'; throw err; }
+    const { value, done } = chunk;
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    }
+    let i;
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
+      if (!line.startsWith('data:')) continue;
+      let ev; try { ev = JSON.parse(line.slice(5)); } catch (_) { continue; }
+      if (ev.type === 'content_block_delta' && ev.delta && ev.delta.type === 'text_delta') { text += ev.delta.text; onProgress && onProgress(text.length); }
+      else if (ev.type === 'message_delta' && ev.delta) stop = ev.delta.stop_reason || stop;
+      else if (ev.type === 'error') { const err = new Error('STREAM'); err.detail = ev.error?.message; throw err; }
+    }
+    if (!reader) break;
+  }
+  if (stop === 'refusal') throw new Error('REFUSAL');
+  if (stop === 'max_tokens') { const err = new Error('TRUNCATED'); throw err; }
+  return text;
+}
+function friendlyError(e) {
+  const m = e.message || '';
+  if (m === 'NO_KEY') return 'Add your Claude key in Settings first.';
+  if (m === 'NETWORK') return 'Couldn’t reach Claude. Check the Wi-Fi and try again.' + (e.detail ? ' (Technical detail: ' + e.detail + ')' : '');
+  if (m === 'REFUSAL') return 'Claude couldn’t make a lesson from that. Try wording the topic differently.';
+  if (m === 'TRUNCATED') return 'That lesson was too long and got cut off. Try a smaller topic, or turn off “Split big topics”.';
+  if (m === 'BAD_LESSON') return 'The lesson came back incomplete. Please try again.';
+  if (e.status === 401 || e.status === 403) return 'Your Claude key didn’t work. Check it in Settings.';
+  if (e.status === 429 || e.status === 529 || e.status >= 500) return 'Claude is busy right now. Try again in a minute.';
+  if (e.status === 400 && /credit|billing|balance/i.test(e.detail || '')) return 'Your Claude account is out of credit. Add some at console.anthropic.com.';
+  if (e.status === 400 || e.status === 413) return 'Claude couldn’t read that. If it’s a big file, try pasting the text or typing the topic. (' + (e.detail || 'error') + ')';
+  return 'Something went wrong (' + (e.detail || m) + '). Try again.';
+}
+
+/* ---------- Lesson authoring prompt ---------- */
+const AUTHOR_SYSTEM = `You write lessons for a learning app used by ONE Grade 5 student (age 10) in Ontario, Canada, on an iPad. A parent gives you a topic title, pasted text, or a worksheet. You return ONE JSON object and nothing else: no markdown fences, no comments.
+
+CURRICULUM
+Align to the current Ontario curriculum for Grade 5:
+- math: Mathematics (2020). Strands: A Social-Emotional Learning Skills & Math Processes, B Number, C Algebra (incl. coding), D Data (incl. probability), E Spatial Sense, F Financial Literacy.
+- science: Science and Technology (2022). Strands: A STEM Skills & Connections, B Life Systems, C Matter and Energy, D Structures and Mechanisms, E Earth and Space Systems.
+- literacy: Language (2023). Strands: A Literacy Connections & Applications, B Foundations of Language, C Comprehension, D Composition.
+- social: Social Studies Grades 1–6 (2023). Grade 5 strands: A Heritage & Identity (interactions of Indigenous peoples and Europeans before 1713), B People & Environments (role of government and responsible citizenship).
+If you only get a title, infer what a Grade 5 Ontario class learns under it and use the standard examples teachers use. If given a worksheet, teach the same skills and include problems like the ones on it.
+Canadian context: dollars and cents, metric units, Canadian spelling, Canadian places and names.
+Content is neutral and secular: no religious framing or faith-based examples.
+
+VOICE (very important)
+Sound like a great Grade 5 teacher talking to a curious kid. Not like a parent, not like a textbook.
+- Short sentences. One idea per card.
+- Concrete everyday example FIRST (snacks, pizza, games, allowance money, sports, pets), then the idea.
+- Show a new word in action before you name it.
+- Visual language ("Picture 3 pizzas, each cut into 4 slices").
+- Each explain card: max 60 words.
+- Kind, never shaming. Wrong-answer explanations are one friendly line that shows the right thinking.
+
+SESSION (30–35 minutes total, the app runs it in this order)
+explain cards (1–3, ~1 min each) → worked examples (2–3, ~2 min each) → pencil task 1 → adaptive practice → pencil task 2 → more practice → pencil task 3 → check.
+"offscreen" pencil tasks: 2–3 tasks, 4–6 minutes each ("minutes"), 3–5 problems each, with an answer for every problem. Done on paper away from the screen. Make them meaty enough to fill the time (e.g. show your work, draw a model, write a sentence).
+
+QUESTIONS
+practice: 12–15 questions. "tier" 1 = easy warm-up, 2 = on grade level, 3 = stretch. About 5 / 5 / 4. Mix types.
+check: 6–8 questions, ONLY "mcq" or "numeric", covering every concept, mostly tier 2. Don't repeat practice questions.
+Types:
+- "mcq": "choices" = 3–4 strings; "answer" must be EXACTLY one of the choices (same text). Wrong choices should reflect common mistakes.
+- "numeric": "answer" is a whole number, decimal, fraction like "3/4", or mixed number like "2 1/3". No units in the answer; put units in the prompt ("How many cm?"). Fractions in lowest terms unless the question asks for another form. ALWAYS include "expr": a plain arithmetic expression using only numbers, + - * / and parentheses that computes the answer (e.g. "(3/4)*8", "125-48", "2+1/3"). The app recomputes it to check your answer key.
+- "short": a one- or two-word answer; list other correct forms in "accept". Use rarely.
+- "order": put 3–5 things in order (timeline, steps, smallest to largest). "answer" is the array of items in the correct order.
+Every question has "explanationWrong" (one kind line explaining why the right answer is right) and "explainRef" (0-based index of the explain card it relates to). Optional "visual": a short emoji picture (max 40 characters) when it helps.
+The answer must never appear in the prompt. Prompts: max ~30 words.
+Work every answer out carefully before writing it. A wrong answer key marks a child wrong when she is right, so accuracy matters more than anything else.
+
+TAGGING
+The request lists the Grade 5 expectation codes for the subject. Put the 1–3 codes the lesson teaches in meta.expectations, and give every practice and check question an "exp" code. Use ONLY codes from that list. If a target expectation is given, teach to it.
+
+SUBJECT NOTES
+- math: use "numeric" with "expr" wherever possible.
+- science: concept quizzes, "which part does…" labelling questions (describe parts in words or emoji), cause → effect, fair-test thinking. Pencil tasks may be safe at-home observations or mini-experiments with kitchen items (no heat, sharp tools, or chemicals; say "ask a grown-up" when needed); give expected observations as the answers.
+- literacy: for reading comprehension, write an ORIGINAL "passage" (250–400 words, Grade 5 reading level, story or information text, Canadian setting welcome) and base the questions on it. For grammar, spelling or vocabulary, use mcq/short with clear single answers. Pencil tasks can be short writing tasks; give a checklist of what a good answer includes as the "answers".
+- social: timelines with "order", cause → effect and perspective questions as mcq. Name specific First Nations, Métis and Inuit peoples, present them accurately and respectfully as living, diverse peoples, avoid stereotypes. Pencil tasks can be maps, timelines or short "from their point of view" writing.
+
+JSON SHAPE
+{
+  "sequence": null OR { "title": string, "lessons": [ { "title": string, "focus": string } ] },
+  "sourceNotes": string,
+  "lesson": {
+    "meta": { "subject": "math|science|social|literacy", "strand": string, "topic": string, "title": string (short, kid-friendly), "curriculum": string, "expectations": [codes from the list, e.g. "B2.5"], "forMom": string (one sentence: what she'll practice) },
+    "concepts": [3–5 short bullets for the parent],
+    "passage": null OR { "title": string, "text": string }  (literacy reading lessons; otherwise null),
+    "explain": [ { "text": string, "visual": string (optional emoji picture), "term": string (optional) } ],
+    "examples": [ { "title": string, "problem": string, "visual": string (optional), "steps": [string], "answer": string } ],
+    "practice": [ { "type": "mcq|numeric|short|order", "tier": 1|2|3, "prompt": string, "choices": [string], "answer": string or [string], "accept": [string], "expr": string, "explanationWrong": string, "explainRef": number, "exp": string (code), "visual": string } ],
+    "offscreen": [ { "title": string, "instructions": string, "problems": [string], "answers": [string], "minutes": number } ],
+    "check": [ same shape as practice, type mcq or numeric only ],
+    "reward": { "pointsBase": 100 }
+  }
+}
+"sourceNotes": up to 250 words summarizing the source material (key facts, numbers, wording) so later lessons in a sequence can be written without it. Empty string if the input was just a title.`;
+
+function authorUserContent(req) {
+  const target = req.expCode || (req.seq && req.seq.expCode);
+  const subj = `Subject: ${req.subject} (${SUBJECTS[req.subject].curriculum}). Grade 5.\n${expListText(req.subject)}${target ? `\nTarget expectation for this lesson: ${target} (${expText(req.subject, target)}).` : ''}`;
+  if (req.mode === 'sequence') {
+    const { seq, k } = req;
+    return [{ type: 'text', text: `${subj}
+This is lesson ${k + 1} of ${seq.lessons.length} in the sequence "${seq.title}".
+Sequence plan:
+${seq.lessons.map((e, i) => `${i + 1}. ${e.title}: ${e.focus}`).join('\n')}
+Build ONLY lesson ${k + 1} ("${seq.lessons[k].title}", focus: ${seq.lessons[k].focus}). Build on the earlier lessons; don't re-teach them except as a quick reminder.
+Notes about the source material: ${seq.notes || '(only a topic title was given)'}
+Set "sequence" to null.` }];
+  }
+  const splitRule = req.split
+    ? 'If this is too much for one 30–35 minute Grade 5 lesson, plan a sequence of 2–3 lessons in teaching order, return it in "sequence", and build ONLY lesson 1 in full in "lesson". Otherwise set "sequence" to null.'
+    : 'Make exactly ONE lesson that covers the whole thing. Set "sequence" to null.';
+  if (req.mode === 'topic') return [{ type: 'text', text: `${subj}\nTopic: ${req.topic}\n${splitRule}` }];
+  if (req.mode === 'text') return [{ type: 'text', text: `${subj}\nHere is the worksheet or notes text:\n<source>\n${req.text}\n</source>\n${splitRule}` }];
+  const block = req.file.kind === 'pdf'
+    ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: req.file.data } }
+    : { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: req.file.data } };
+  return [block, { type: 'text', text: `${subj}\nBuild the lesson from the attached worksheet (it may be a scan or photo).\n${splitRule}` }];
+}
+function extractJSON(t) {
+  t = t.replace(/^```(?:json)?/m, '').replace(/```\s*$/m, '');
+  const a = t.indexOf('{'), b = t.lastIndexOf('}');
+  if (a < 0 || b < a) throw new Error('BAD_LESSON');
+  return JSON.parse(t.slice(a, b + 1));
+}
+async function authorLesson(req, onProgress, signal) {
+  let lastErr;
+  for (let tries = 0; tries < 2; tries++) {
+    const text = await callClaude({ model: CONFIG.AUTHOR_MODEL, effort: CONFIG.AUTHOR_EFFORT, system: AUTHOR_SYSTEM, content: authorUserContent(req), onProgress, signal });
+    try {
+      const out = extractJSON(text);
+      const lesson = normalizeLesson(out.lesson || out, req.subject);
+      const target = req.expCode || (req.seq && req.seq.expCode);
+      if (target && !lesson.meta.expectations.includes(target)) lesson.meta.expectations.unshift(target);
+      [...lesson.practice, ...lesson.check].forEach(q => { if (!q.exp) q.exp = lesson.meta.expectations[0] || ''; });
+      return { lesson, sequence: out.sequence, sourceNotes: str(out.sourceNotes) };
+    } catch (e) { lastErr = e; if (e.name === 'AbortError') throw e; }
+  }
+  throw new Error('BAD_LESSON');
+}
+
+/* ---------- Answer-key safety: parse numbers + recompute expressions (no eval) ---------- */
+function parseNumber(input) {
+  if (input == null) return null;
+  let s = String(input).trim().toLowerCase().replace(/[$¢%]/g, '').replace(/(\d),(?=\d{3}\b)/g, '$1').replace(/\s+/g, ' ').trim();
+  s = s.replace(/\s*[a-z²³]+\.?$/, '').trim();
+  let m;
+  if ((m = s.match(/^(-?\d+) (\d+)\/(\d+)$/))) { const w = +m[1], n = +m[2], d = +m[3]; if (!d) return null; return { v: w < 0 ? w - n / d : w + n / d, frac: { n: Math.abs(w) * d + n, d, fp: { n, d } }, kind: 'mixed' }; }
+  if ((m = s.match(/^(-?\d+)\/(\d+)$/))) { const n = +m[1], d = +m[2]; if (!d) return null; return { v: n / d, frac: { n, d, fp: { n, d } }, kind: 'frac' }; }
+  if (/^-?(\d+\.?\d*|\.\d+)$/.test(s)) return { v: parseFloat(s), kind: 'dec' };
+  return null;
+}
+function evalExpr(src) {
+  const s = String(src || '').replace(/×/g, '*').replace(/÷/g, '/').replace(/[−–]/g, '-').replace(/\s+/g, '');
+  if (!s || /[^0-9+\-*/().]/.test(s)) return null;
+  let i = 0;
+  const num = () => { const m = s.slice(i).match(/^(\d+\.?\d*|\.\d+)/); if (!m) throw 0; i += m[0].length; return parseFloat(m[0]); };
+  const factor = () => { if (s[i] === '-') { i++; return -factor(); } if (s[i] === '+') { i++; return factor(); } if (s[i] === '(') { i++; const v = expr(); if (s[i++] !== ')') throw 0; return v; } return num(); };
+  const term = () => { let v = factor(); while (s[i] === '*' || s[i] === '/') { const op = s[i++], r = factor(); v = op === '*' ? v * r : v / r; } return v; };
+  const expr = () => { let v = term(); while (s[i] === '+' || s[i] === '-') { const op = s[i++], r = term(); v = op === '+' ? v + r : v - r; } return v; };
+  try { const v = expr(); return i === s.length && isFinite(v) ? v : null; } catch (_) { return null; }
+}
+function normQ(q, id, dropped, checkOnly) {
+  if (!q || typeof q !== 'object') return null;
+  const type = ['mcq', 'numeric', 'short', 'order'].includes(q.type) ? q.type : null;
+  const out = { id, exp: str(q.exp), type, tier: clamp(Math.round(+q.tier || 2), 1, 3), prompt: str(q.prompt), visual: str(q.visual), explanationWrong: str(q.explanationWrong), explainRef: Number.isInteger(q.explainRef) ? q.explainRef : 0, accept: arr(q.accept).map(str).filter(Boolean) };
+  const drop = why => { dropped.push({ id, prompt: out.prompt, why }); return null; };
+  if (!type || !out.prompt) return drop('malformed');
+  if (checkOnly && type !== 'mcq' && type !== 'numeric') return drop('check must be mcq/numeric');
+  if (type === 'mcq') {
+    const ch = arr(q.choices).map(str).filter(Boolean);
+    let ans = str(q.answer);
+    if (!ch.includes(ans)) {
+      const hit = ch.find(c => c.toLowerCase() === ans.toLowerCase());
+      if (hit) ans = hit; else if (/^\d$/.test(ans) && ch[+ans]) ans = ch[+ans]; else return drop('answer not in choices');
+    }
+    if (ch.length < 2 || new Set(ch).size !== ch.length) return drop('bad choices');
+    if (q.expr) { const v = evalExpr(q.expr), a = parseNumber(ans); if (v != null && a && !near(v, a.v)) return drop('key mismatch'); }
+    out.choices = shuffle(ch); out.answer = ans;
+  } else if (type === 'numeric') {
+    const ans = str(q.answer), a = parseNumber(ans);
+    if (!a) return drop('answer not a number');
+    if (q.expr) { const v = evalExpr(q.expr); if (v != null && !near(v, a.v)) return drop('key mismatch'); }
+    out.answer = ans; out.expr = str(q.expr);
+  } else if (type === 'short') {
+    out.answer = str(Array.isArray(q.answer) ? q.answer[0] : q.answer); if (!out.answer) return drop('no answer');
+  } else {
+    const items = arr(q.answer).map(str).filter(Boolean);
+    if (items.length < 2 || new Set(items).size !== items.length) return drop('bad order');
+    out.answer = items;
+  }
+  if (!out.explanationWrong) out.explanationWrong = 'Look at it one more time. You’ve got this!';
+  return out;
+}
+function normalizeLesson(raw, subject) {
+  if (!raw || typeof raw !== 'object') throw new Error('BAD_LESSON');
+  const m = raw.meta || {}, dropped = [];
+  const L = {
+    meta: { subject: SUBJECTS[m.subject] ? m.subject : subject, strand: str(m.strand), topic: str(m.topic), title: str(m.title || m.topic) || 'Today’s lesson', grade: 5, curriculum: str(m.curriculum), expectations: arr(m.expectations).map(str).slice(0, 6), forMom: str(m.forMom), sequencePosition: 1, sequenceTotal: 1, sequenceId: null },
+    concepts: arr(raw.concepts).map(str).filter(Boolean).slice(0, 5),
+    explain: arr(raw.explain).map(c => typeof c === 'string' ? { text: str(c), visual: '' } : { text: str(c && c.text), visual: str(c && c.visual), term: str(c && c.term) }).filter(c => c.text).slice(0, 3),
+    examples: arr(raw.examples).map(e => ({ title: str(e && e.title), problem: str(e && e.problem), visual: str(e && e.visual), steps: arr(e && e.steps).map(str).filter(Boolean), answer: str(e && e.answer) })).filter(e => e.problem && e.steps.length).slice(0, 3),
+    practice: [], offscreen: [], check: [],
+    reward: { pointsBase: CONFIG.POINTS.lessonBase },
+  };
+  L.offscreen = arr(raw.offscreen).map(o => ({ title: str(o && o.title) || 'Pencil time', instructions: str(o && o.instructions), problems: arr(o && o.problems).map(str).filter(Boolean).slice(0, 6), answers: arr(o && o.answers).map(str), minutes: clamp(Math.round(+(o && o.minutes) || 5), 2, 8) })).filter(o => o.problems.length).slice(0, 3);
+  L.practice = arr(raw.practice).map((q, i) => normQ(q, 'p' + i, dropped, false)).filter(Boolean).slice(0, 15);
+  L.check = arr(raw.check).map((q, i) => normQ(q, 'c' + i, dropped, true)).filter(Boolean).slice(0, 8);
+  L.qaDropped = dropped;
+  const ps = raw.passage && typeof raw.passage === 'object' ? raw.passage : null;
+  L.passage = ps && str(ps.text).length > 80 ? { title: str(ps.title), text: str(ps.text) } : null;
+  const subj = L.meta.subject;
+  L.meta.expectations = [...new Set(L.meta.expectations.map(c => matchCode(subj, c)).filter(Boolean))].slice(0, 4);
+  [...L.practice, ...L.check].forEach(q => { q.exp = matchCode(subj, q.exp) || L.meta.expectations[0] || ''; });
+  if (!L.explain.length || L.practice.length < 4 || L.check.length < 3) throw new Error('BAD_LESSON');
+  const ne = L.explain.length;
+  [...L.practice, ...L.check].forEach(q => { q.explainRef = clamp(q.explainRef, 0, ne - 1); });
+  return L;
+}
+const estMinutes = L => Math.round((L.passage ? 4 : 0) + L.explain.length * 1 + L.examples.length * 2 + L.offscreen.reduce((s, o) => s + o.minutes, 0) + L.practice.length * 0.9 + L.check.length * 0.8);
+
+/* ---------- Generation job (one at a time, in memory) ---------- */
+let GEN = null;
+async function startGen(req) {
+  GEN = { req, chars: 0, status: 'running', ctrl: new AbortController() };
+  go('generating');
+  const job = GEN;
+  try {
+    const out = await authorLesson(req, n => { job.chars = n; updateGenBar(); }, job.ctrl.signal);
+    if (GEN !== job) return;
+    const L = saveNewLesson(out, req);
+    job.status = 'done'; job.lessonId = L.id;
+    if (view.name === 'generating') go('summary', { id: L.id }); else { toast('Your lesson is ready.'); if (view.name === 'momHome') render(); }
+    pumpSequences();
+  } catch (e) {
+    if (GEN !== job) return;
+    if (e.name === 'AbortError') { GEN = null; return; }
+    job.status = 'error'; job.error = friendlyError(e);
+    if (view.name === 'generating') render(); else if (role === 'mom') toast('The lesson didn’t finish. Open “New lesson” to retry.');
+  }
+}
+const GEN_EXPECTED = 24000;
+function genPct() { return GEN ? clamp(Math.round(4 + 92 * GEN.chars / GEN_EXPECTED), 4, 96) : 0; }
+function genMsg() {
+  const p = genPct();
+  return p < 8 ? 'Reading and planning…' : p < 25 ? 'Writing the explanations…' : p < 40 ? 'Working through examples…' : p < 70 ? 'Making practice questions…' : p < 85 ? 'Adding pencil tasks…' : 'Writing the final check…';
+}
+function updateGenBar() { const b = $('#genbar'), m = $('#genmsg'); if (b) b.style.width = genPct() + '%'; if (m) m.textContent = genMsg(); }
+VIEWS.generating = () => {
+  if (!GEN) return VIEWS.momHome();
+  if (GEN.status === 'error') return `
+<div class="center-screen"><div class="big-emoji">😕</div><h1>That didn’t work</h1><p>${esc(GEN.error)}</p>
+<button class="big primary" data-a="retryGen">Try again</button><button class="big ghost" data-a="backToForm">Change what I typed</button></div>`;
+  if (GEN.status === 'done') return VIEWS.summary({ id: GEN.lessonId });
+  return `
+<div class="center-screen"><div class="big-emoji spin">✏️</div><h1>Writing the lesson…</h1>
+<p class="muted" id="genmsg">${genMsg()}</p><div class="bar"><i id="genbar" style="width:${genPct()}%"></i></div>
+<p class="muted"><small>Usually about a minute. You can leave this screen; it keeps going.</small></p>
+<div class="row"><button class="ghost" data-a="go" data-v="momHome">Home</button><button class="ghost danger" data-a="cancelGen">Cancel</button></div></div>`;
+};
+A.retryGen = () => startGen(GEN.req);
+A.backToForm = () => { GEN = null; go('newLesson'); };
+A.cancelGen = () => { if (GEN) GEN.ctrl.abort(); GEN = null; go('newLesson'); };
+function saveNewLesson(out, req) {
+  const L = out.lesson;
+  L.id = uid(); L.createdAt = Date.now(); L.source = req.mode; L.status = 'ready'; L.explainUsed = 0;
+  const sq = out.sequence;
+  if (req.split && sq && arr(sq.lessons).length > 1) {
+    const seq = { id: uid(), title: str(sq.title) || L.meta.title, subject: req.subject, expCode: req.expCode || '', notes: out.sourceNotes || (req.mode === 'topic' ? req.topic : (req.text || '').slice(0, 4000)),
+      lessons: sq.lessons.slice(0, 3).map((x, i) => ({ title: str(x.title) || 'Lesson ' + (i + 1), focus: str(x.focus), lessonId: i === 0 ? L.id : null, status: i === 0 ? 'ready' : 'pending' })) };
+    S.sequences[seq.id] = seq;
+    Object.assign(L.meta, { sequenceId: seq.id, sequencePosition: 1, sequenceTotal: seq.lessons.length });
+  }
+  S.lessons[L.id] = L; S.order.unshift(L.id); save();
+  return L;
+}
+/* Write later lessons of a sequence quietly in the background. Retries on next app open if it fails. */
+let pumping = false;
+async function pumpSequences() {
+  if (pumping || !S.settings.apiKey) return;
+  pumping = true;
+  try {
+    for (const seq of Object.values(S.sequences)) {
+      for (let k = 1; k < seq.lessons.length; k++) {
+        const e = seq.lessons[k];
+        if (e.lessonId || e.status === 'deleted') continue;
+        e.status = 'writing'; refreshMom();
+        try {
+          const out = await authorLesson({ subject: seq.subject, mode: 'sequence', seq, k });
+          if (!S.sequences[seq.id]) break;
+          const L = out.lesson;
+          L.id = uid(); L.createdAt = Date.now(); L.source = 'sequence'; L.status = 'ready'; L.explainUsed = 0;
+          Object.assign(L.meta, { sequenceId: seq.id, sequencePosition: k + 1, sequenceTotal: seq.lessons.length });
+          S.lessons[L.id] = L;
+          const prevId = seq.lessons[k - 1].lessonId, pi = S.order.indexOf(prevId);
+          S.order.splice(pi >= 0 ? pi : 0, 0, L.id);
+          e.lessonId = L.id; e.status = 'ready';
+          const prev = S.lessons[prevId];
+          if (prev && prev.status === 'done' && !S.todayLessonId) S.todayLessonId = L.id;
+          save(); refreshMom();
+        } catch (err) { e.status = 'error'; save(); refreshMom(); return; }
+      }
+    }
+  } finally { pumping = false; }
+}
+function refreshMom() { if (role === 'mom' && (view.name === 'momHome' || view.name === 'summary')) render(); }
+
+/* ==================================================================
+   Mom: one-screen lesson summary
+   ================================================================== */
+VIEWS.summary = ({ id }) => {
+  const L = S.lessons[id];
+  if (!L) return `<p>That lesson is gone.</p><button class="big ghost" data-a="go" data-v="momHome">Home</button>`;
+  const m = L.meta, seq = m.sequenceId && S.sequences[m.sequenceId];
+  const canCollapse = seq && m.sequencePosition === 1 && GEN && GEN.lessonId === id && GEN.req;
+  return `
+<div class="topbar"><button data-a="go" data-v="momHome">← Home</button>${subjChip(m.subject)}</div>
+<div class="card">
+  ${m.strand ? `<span class="chip p">${esc(m.strand)}</span>` : ''}
+  <h1>${esc(m.title)}</h1>
+  ${seq ? `<p><b>Lesson ${m.sequencePosition} of ${m.sequenceTotal}</b> in “${esc(seq.title)}”. The next ${m.sequenceTotal - m.sequencePosition > 1 ? 'ones are' : 'one is'} written automatically.</p>` : ''}
+  <h3>What she’ll learn</h3>
+  <ul>${L.concepts.map(c => `<li>${esc(c)}</li>`).join('')}</ul>
+  ${m.expectations.length ? `<p class="muted"><small>Ontario Grade 5 ${esc(SUBJECTS[m.subject].label)}: ${m.expectations.map(c => `<b>${esc(c)}</b> ${esc(expText(m.subject, c))}`).join(' · ')}</small></p>` : ''}
+  <h3>What she’ll practice</h3>
+  ${m.forMom ? `<p>${esc(m.forMom)}</p>` : ''}
+  <p class="muted">${L.practice.length} practice questions (easy → harder) · ${L.offscreen.length} pencil tasks · ${L.check.length}-question check · about ${estMinutes(L)} min</p>
+  <button class="big primary" data-a="startLesson" data-v="${id}">▶ ${L.status === 'done' ? 'Do it again' : S.todayLessonId === id ? 'Hand it to ' + esc(kidName()) : 'START'}</button>
+  <div class="row">
+    <button class="ghost" data-a="editLesson" data-v="${id}">Edit (optional)</button>
+    ${canCollapse ? `<button class="ghost" data-a="collapseSeq" data-v="${id}">Make it one lesson</button>` : ''}
+    <button class="ghost danger" data-a="deleteLesson" data-v="${id}">Delete</button>
+  </div>
+</div>
+${seq ? `<h3>The sequence</h3><div class="card"><ul class="list">${seq.lessons.map((e, k) => `<li class="item"><div class="grow"><div class="t">${k + 1}. ${esc(e.title)}</div><div class="s">${esc(e.focus)}</div></div>
+  <span class="chip ${e.lessonId ? 'g' : ''}">${e.lessonId ? (S.lessons[e.lessonId]?.status === 'done' ? 'Done' : 'Ready') : e.status === 'deleted' ? 'Removed' : 'Writing…'}</span></li>`).join('')}</ul></div>` : ''}`;
+};
+A.startLesson = id => {
+  S.todayLessonId = id;
+  if (S.attempt && S.attempt.mode === 'lesson' && S.attempt.lessonId !== id) S.attempt = null;
+  save(); role = 'kid'; go('kidHome'); toast('Ready for ' + kidName() + '! 🎉');
+};
+A.deleteLesson = id => {
+  const L = S.lessons[id]; if (!L || !confirm('Delete “' + L.meta.title + '”?')) return;
+  delete S.lessons[id]; S.order = S.order.filter(x => x !== id);
+  if (S.todayLessonId === id) S.todayLessonId = null;
+  if (S.attempt && S.attempt.lessonId === id) S.attempt = null;
+  Object.values(S.sequences).forEach(seq => seq.lessons.forEach(e => { if (e.lessonId === id) { e.lessonId = null; e.status = 'deleted'; } }));
+  save(); go('momHome');
+};
+A.collapseSeq = id => {
+  const L = S.lessons[id], req = GEN && GEN.req; if (!L || !req) return;
+  const seqId = L.meta.sequenceId;
+  delete S.lessons[id]; S.order = S.order.filter(x => x !== id);
+  if (seqId) { S.sequences[seqId].lessons.forEach(e => { if (e.lessonId && e.lessonId !== id) { delete S.lessons[e.lessonId]; S.order = S.order.filter(x => x !== e.lessonId); } }); delete S.sequences[seqId]; }
+  if (S.todayLessonId === id) S.todayLessonId = null;
+  save(); startGen(Object.assign({}, req, { split: false }));
+};
+
+/* ---------- Curriculum coverage: what's been taught and how she's doing, per expectation ---------- */
+function coverage(subj) {
+  const m = {}, get = c => (m[c] = m[c] || { lessons: 0, right: 0, total: 0 });
+  Object.values(S.lessons).forEach(L => { if (L.meta.subject === subj) L.meta.expectations.forEach(c => get(c).lessons++); });
+  S.results.forEach(r => { if (r.subject === subj) Object.entries(r.byExp || {}).forEach(([c, [a, b]]) => { const e = get(c); e.right += a; e.total += b; }); });
+  return m;
+}
+let CUR_SUBJ = 'math';
+VIEWS.curriculum = () => {
+  const subj = CUR_SUBJ, C = CURRICULUM[subj], cov = coverage(subj);
+  const all = C.strands.flatMap(s => s.items), done = all.filter(([c]) => cov[c] && cov[c].total).length;
+  const chip = c => { const e = cov[c]; if (e && e.total) { const p = Math.round(100 * e.right / e.total); return `<span class="chip ${p >= 80 ? 'g' : ''}">${p}%</span>`; } return e && e.lessons ? '<span class="chip p">Lesson ready</span>' : '<span class="chip" style="background:#F1EEE9;color:var(--muted)">Not yet</span>'; };
+  return `
+<div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Grade 5 curriculum</span><span></span></div>
+<div class="subjects">${Object.entries(SUBJECTS).map(([k, s]) => `<button class="${subj === k ? 'on' : ''}" data-a="curSubj" data-v="${k}"><span>${s.emoji}</span>${s.label}</button>`).join('')}</div>
+<p class="muted"><small>${esc(SUBJECTS[subj].curriculum)}. ${C.level === 'overall' ? 'Shown by main (overall) expectation for now.' : 'Every Grade 5 expectation, in plain words.'} Practised: ${done} of ${all.length}. Tap one to make a lesson for it.</small></p>
+${C.strands.map(st => `<h3>${esc(st.code)} · ${esc(st.name)}</h3><div class="card"><ul class="list">${st.items.map(([c, t]) => `
+  <li class="item" data-a="lessonFor" data-v="${c}" style="cursor:pointer"><div class="grow"><div class="t">${esc(c)}</div><div class="s">${esc(t)}</div></div>${chip(c)}</li>`).join('')}</ul></div>`).join('')}`;
+};
+A.curSubj = v => { CUR_SUBJ = v; render(); };
+A.lessonFor = code => {
+  if (!S.settings.apiKey) { toast('First add your Claude key in Settings.'); go('settings'); return; }
+  Object.assign(FORMS.NL, { subject: CUR_SUBJ, expSubject: CUR_SUBJ, expCode: code, mode: 'topic', topic: expText(CUR_SUBJ, code) });
+  go('newLesson');
+};
+
+/* ---------- Optional edit ---------- */
+VIEWS.edit = ({ id }) => {
+  const E = FORMS.ED;
+  const qRow = (q, sec, i) => `<div class="qedit"><div class="row"><b>${sec === 'practice' ? 'Practice' : 'Check'} ${i + 1}</b><span class="muted"><small>${q.type}${q.type === 'mcq' ? ' · choices: ' + esc(q.choices.join(' | ')) : ''}</small></span>
+    <button class="ghost danger" style="flex:0" data-a="edDel" data-v="${sec}.${i}">Remove</button></div>
+    <textarea data-bind="ED:${sec}.${i}.prompt">${esc(q.prompt)}</textarea>
+    ${q.type === 'order' ? `<label>Correct order (one per line)</label><textarea data-bind="ED:${sec}.${i}._order">${esc(q.answer.join('\n'))}</textarea>` : `<label>Answer</label><input data-bind="ED:${sec}.${i}.answer" value="${esc(q.answer)}">`}</div>`;
+  return `
+<div class="topbar"><button data-a="openSummary" data-v="${id}">← Cancel</button><span class="who">Edit lesson</span><button data-a="edSave">Save</button></div>
+<div class="card"><label>Title</label><input data-bind="ED:meta.title" value="${esc(E.meta.title)}">
+<label>Concepts (one per line)</label><textarea data-bind="ED:_concepts">${esc(E.concepts.join('\n'))}</textarea></div>
+<div class="card"><h2>Practice</h2>${E.practice.map((q, i) => qRow(q, 'practice', i)).join('')}</div>
+<div class="card"><h2>Check</h2>${E.check.map((q, i) => qRow(q, 'check', i)).join('')}</div>
+<button class="big primary" data-a="edSave">Save changes</button>`;
+};
+A.editLesson = id => { FORMS.ED = JSON.parse(JSON.stringify(S.lessons[id])); FORMS.ED._concepts = FORMS.ED.concepts.join('\n'); go('edit', { id }); };
+A.edDel = v => { const [sec, i] = v.split('.'); FORMS.ED[sec].splice(+i, 1); render(); };
+A.edSave = () => {
+  const E = FORMS.ED, id = view.p.id;
+  if (E.practice.length < 3 || E.check.length < 2) { toast('Keep at least 3 practice and 2 check questions.'); return; }
+  for (const q of [...E.practice, ...E.check]) {
+    if (q._order != null) { q.answer = q._order.split('\n').map(str).filter(Boolean); delete q._order; }
+    if (q.type === 'mcq' && !q.choices.includes(str(q.answer))) { toast('An answer must match one of its choices: “' + q.prompt.slice(0, 40) + '…”'); return; }
+    if (q.type === 'numeric' && !parseNumber(q.answer)) { toast('That answer isn’t a number: “' + q.prompt.slice(0, 40) + '…”'); return; }
+    if (typeof q.answer === 'string') q.answer = str(q.answer);
+    q.expr = '';
+  }
+  E.concepts = str(E._concepts).split('\n').map(str).filter(Boolean).slice(0, 5); delete E._concepts;
+  S.lessons[id] = E; save(); toast('Saved.'); go('summary', { id });
+};
+
+/* ==================================================================
+   Learner home
+   ================================================================== */
+const dueReviews = () => S.review.filter(r => r.due <= todayStr());
+const activeGoal = () => S.goals.find(g => !g.done);
+function goalCard(compact) {
+  const g = activeGoal(); if (!g) return '';
+  const have = S.points.balance / (S.settings.rate || 100), pct = clamp(Math.round(100 * have / g.price), 0, 100);
+  return `<div class="card goal"><div class="row"><b style="flex:1">🎯 ${esc(g.name)}</b><span>${money(Math.min(have, g.price))} of ${money(g.price)}</span></div>
+  <div class="bar"><i style="width:${pct}%"></i></div>${compact ? '' : `<p class="muted" style="margin:0">${pct >= 100 ? 'You did it! Ask Mom. 🎉' : `${Math.ceil((g.price - have) * (S.settings.rate || 100))} more points to go`}</p>`}</div>`;
+}
+VIEWS.kidHome = () => {
+  const L = S.lessons[S.todayLessonId];
+  const a = S.attempt;
+  const resumeLesson = a && a.mode === 'lesson' && L && a.lessonId === L.id;
+  const resumeReview = a && a.mode === 'review';
+  const due = dueReviews().length;
+  const seq = L && L.meta.sequenceTotal > 1 ? `<p class="muted">Part ${L.meta.sequencePosition} of ${L.meta.sequenceTotal}</p>` : '';
+  return `
+<div class="topbar"><span class="who">Hi ${esc(kidName())}! 👋</span><button data-a="switchUser">Switch</button></div>
+<div class="stats">
+  <div class="stat">🔥<b>${S.streak.count}</b><span>day streak</span></div>
+  <div class="stat">⭐<b>${S.points.balance}</b><span>points</span></div>
+  <div class="stat">💵<b>${money(S.points.balance / (S.settings.rate || 100))}</b><span>earned</span></div>
+</div>
+${goalCard()}
+${resumeReview ? `<button class="big secondary" data-a="resumePlay">🔁 Finish your review</button>` : ''}
+${L ? `<div class="card today">${subjChip(L.meta.subject)}
+  <h3>Today’s lesson</h3><h1>${esc(L.meta.title)}</h1>${seq}
+  <p>About ${estMinutes(L)} minutes. Grab a pencil and paper ✏️📄</p>
+  <button class="big primary" data-a="${resumeLesson ? 'resumePlay' : 'startPlay'}">${resumeLesson ? 'Keep going ▶' : 'Let’s go ▶'}</button></div>`
+  : `<div class="card"><h2>No lesson right now</h2><p>${S.results.length ? 'Great work! Ask Mom for the next one. 🙂' : 'Ask Mom to start one. 🙂'}</p></div>`}
+${due && !resumeReview ? `<button class="big secondary" data-a="startReview">🔁 Review your mistakes (${due})</button>` : ''}
+${S.notebook.length ? `<button class="big ghost" data-a="go" data-v="notebook">📓 My mistakes notebook (${S.notebook.filter(n => n.status === 'open').length} to beat)</button>` : ''}
+${S.redeemables.length ? `<h3>What points can get you</h3><div class="card"><ul class="list">${S.redeemables.map(r => `<li class="item"><div class="grow t">${esc(r.name)}</div><span class="chip ${S.points.balance >= r.points ? 'g' : ''}">${r.points} pts</span></li>`).join('')}</ul><p class="muted" style="margin-bottom:0"><small>Ask Mom when you’re ready to use your points.</small></p></div>` : ''}`;
+};
+
+/* ==================================================================
+   Lesson player (all local, no API calls except "explain differently")
+   ================================================================== */
+let INPUT = { text: '', order: [] };
+function buildSteps(L, warm) {
+  const st = [];
+  warm.forEach(id => st.push({ k: 'warm', id }));
+  L.explain.forEach((_, i) => st.push({ k: 'explain', i }));
+  if (L.passage) st.push({ k: 'passage' });
+  L.examples.forEach((_, i) => st.push({ k: 'example', i }));
+  if (L.offscreen[0]) st.push({ k: 'pencil', i: 0 });
+  const P = L.practice.length, a = Math.ceil(P / 2);
+  st.push({ k: 'practice', n: a });
+  if (L.offscreen[1]) st.push({ k: 'pencil', i: 1 });
+  if (P - a > 0) st.push({ k: 'practice', n: P - a });
+  if (L.offscreen[2]) st.push({ k: 'pencil', i: 2 });
+  L.check.forEach((_, i) => st.push({ k: 'check', i }));
+  return st;
+}
+function newAttempt(mode, lessonId, steps) {
+  return { id: uid(), mode, lessonId, steps, si: 0, sub: {}, tier: 1, run: 0, maxTier: 1, used: [], answers: [], pts: 0, ptsPencil: 0, pencil: [], alt: {}, helped: {}, interject: null, start: Date.now(), active: 0, tick: Date.now() };
+}
+A.startPlay = () => {
+  const L = S.lessons[S.todayLessonId]; if (!L) return;
+  const warm = dueReviews().filter(r => r.lessonId !== L.id).slice(0, 3).map(r => r.id);
+  S.attempt = newAttempt('lesson', L.id, buildSteps(L, warm));
+  INPUT = { text: '', order: [] }; save(); go('play');
+};
+A.resumePlay = () => { INPUT = { text: '', order: [] }; go('play'); };
+A.startReview = (lessonId) => {
+  const items = (lessonId ? S.review.filter(r => r.lessonId === lessonId) : dueReviews()).slice(0, 8);
+  if (!items.length) { toast('Nothing to review. Nice!'); return; }
+  S.attempt = newAttempt('review', lessonId || null, items.map(r => ({ k: 'warm', id: r.id })));
+  INPUT = { text: '', order: [] }; save(); go('play');
+};
+A.startNotebook = () => {
+  const open = S.notebook.filter(n => n.status === 'open').sort((x, y) => (y.misses - x.misses) || (y.last - x.last)).slice(0, 8);
+  if (!open.length) { toast('Nothing in your notebook. Nice!'); return; }
+  const ids = open.map(n => {
+    let r = S.review.find(x => x.lessonId === n.lessonId && x.q.id === n.q.id);
+    if (!r) { r = { id: uid(), lessonId: n.lessonId, q: JSON.parse(JSON.stringify(n.q)), box: 1, due: todayStr(), cause: n.cause || '' }; S.review.push(r); }
+    return r.id;
+  });
+  S.attempt = newAttempt('review', null, ids.map(id => ({ k: 'warm', id })));
+  INPUT = { text: '', order: [] }; save(); go('play');
+};
+VIEWS.notebook = () => {
+  const open = S.notebook.filter(n => n.status === 'open').sort((x, y) => y.last - x.last), done = S.notebook.filter(n => n.status === 'conquered').sort((x, y) => y.done - x.done);
+  const row = n => `<li class="item"><div class="grow"><div class="t">${esc(n.q.prompt)}</div><div class="s">${esc(SUBJECTS[n.subject]?.label || '')} · ${n.cause ? CAUSES[n.cause][0] + ' ' + CAUSES[n.cause][1] + ' · ' : ''}${n.status === 'open' ? `answer: <b>${esc(answerText(n.q))}</b>` : `beat it ${fmtDate(n.done)} ✓`}</div></div></li>`;
+  return `
+<div class="topbar"><button data-a="go" data-v="kidHome">← Back</button><span class="who">📓 My mistakes</span><span></span></div>
+<p class="muted">Every mistake is a chance to get smarter. Beat each one and it moves to the “beaten” list.</p>
+${open.length ? `<button class="big secondary" data-a="startNotebook">Practice these (${Math.min(8, open.length)}) →</button><div class="card"><ul class="list">${open.map(row).join('')}</ul></div>` : '<div class="card"><h2>Nothing here! 🎉</h2><p class="muted">When you miss a question it lands here until you beat it.</p></div>'}
+${done.length ? `<h3>Beaten ✓ (${done.length})</h3><div class="card"><ul class="list">${done.slice(0, 20).map(row).join('')}</ul></div>` : ''}`;
+};
+A.exitPlay = () => { touch(); save(); go('kidHome'); };
+function touch() { const a = S.attempt; if (!a) return; const now = Date.now(); a.active += Math.min(now - (a.tick || now), 5 * 60000); a.tick = now; }
+function curLesson() { return S.attempt && S.attempt.lessonId ? S.lessons[S.attempt.lessonId] : null; }
+function curQ() {
+  const a = S.attempt, st = a.steps[a.si], L = curLesson();
+  if (!st) return null;
+  if (st.k === 'warm') return a.sub.q0 || null;
+  if (st.k === 'practice') return L.practice.find(q => q.id === a.sub.q) || null;
+  if (st.k === 'check') return L.check[st.i] || null;
+  return null;
+}
+function secOf(st) { return st.k === 'warm' ? 'warm' : st.k; }
+function pickPractice(a, L) {
+  const pool = L.practice.filter(q => !a.used.includes(q.id));
+  if (!pool.length) return null;
+  for (const d of [0, 1, -1, 2, -2]) { const c = pool.filter(q => q.tier === a.tier + d); if (c.length) return c[0]; }
+  return pool[0];
+}
+/* Make sure the current step is ready to show (pick questions, skip empty steps). */
+function ensureStep() {
+  const a = S.attempt, L = curLesson();
+  for (let guard = 0; guard < 200; guard++) {
+    const st = a.steps[a.si];
+    if (!st) return false;
+    if (a.mode === 'lesson' && !L) return false;
+    if (st.k === 'practice' && !a.sub.fb && !a.sub.q && a.interject == null) {
+      a.sub.done = a.sub.done || 0;
+      const q = a.sub.done < st.n ? pickPractice(a, L) : null;
+      if (!q) { a.si++; a.sub = {}; continue; }
+      a.sub.q = q.id; a.used.push(q.id);
+    }
+    if (st.k === 'warm' && !a.sub.q0) {
+      const r = S.review.find(x => x.id === st.id);
+      if (!r) { a.si++; a.sub = {}; continue; }
+      a.sub.q0 = r.q;
+    }
+    if ((st.k === 'check' && !L.check[st.i]) || (st.k === 'pencil' && !L.offscreen[st.i]) || (st.k === 'explain' && !L.explain[st.i]) || (st.k === 'passage' && !L.passage) || (st.k === 'example' && !L.examples[st.i])) { a.si++; a.sub = {}; continue; }
+    const q = curQ();
+    if (q && q.type === 'order' && !a.sub.shuf) { let s = shuffle(q.answer); if (s.join() === q.answer.join()) s = s.slice().reverse(); a.sub.shuf = s; }
+    return true;
+  }
+  return false;
+}
+function remainingMin(a) {
+  const L = curLesson(); let m = 0;
+  a.steps.slice(a.si).forEach((st, j) => {
+    if (st.k === 'explain') m += 1; else if (st.k === 'passage') m += 4; else if (st.k === 'example') m += 2; else if (st.k === 'pencil') m += (L && L.offscreen[st.i] ? L.offscreen[st.i].minutes : 4);
+    else if (st.k === 'practice') m += 0.9 * Math.max(0, st.n - (j === 0 ? (a.sub.done || 0) : 0)); else m += 0.8;
+  });
+  return Math.max(1, Math.round(m));
+}
+VIEWS.play = () => {
+  const a = S.attempt;
+  if (!a) return VIEWS.kidHome();
+  if (!ensureStep()) { setTimeout(finishAttempt, 0); return '<div class="center-screen"><div class="big-emoji spin">⭐</div></div>'; }
+  const st = a.steps[a.si], L = curLesson();
+  const pct = Math.round(100 * a.si / a.steps.length);
+  const head = `<div class="playbar"><button class="x" data-a="exitPlay" aria-label="Save and exit">✕</button><div class="bar"><i style="width:${pct}%"></i></div><span class="mins">${a.mode === 'lesson' ? '~' + remainingMin(a) + ' min left' : 'Review'}</span></div>`;
+  if (a.interject != null && st.k === 'practice' && !a.sub.fb) return head + explainCard(a.interject, true);
+  if (st.k === 'warm' && !a.sub.fb && !a.sub.seen) { const r = S.review.find(x => x.id === st.id); if (r && (r.cause === 'idea' || r.cause === 'fact')) return head + reteachCard(r); }
+  if (st.k === 'explain') return head + explainCard(st.i, false);
+  if (st.k === 'passage') return head + passageCard(L.passage);
+  if (st.k === 'example') return head + exampleCard(st.i);
+  if (st.k === 'pencil') return head + pencilCard(st.i);
+  const q = curQ();
+  let label;
+  if (st.k === 'practice') label = `Practice · ${(a.sub.done || 0) + 1} of ${st.n}`;
+  else if (st.k === 'check') label = `Check · ${st.i + 1} of ${L.check.length}`;
+  else label = a.mode === 'review' ? `Review · ${a.si + 1} of ${a.steps.length}` : 'Warm-up: remember this one? 🔁';
+  return head + questionCard(q, label, st.k === 'practice');
+};
+VIEWS.play.after = () => {
+  const a = S.attempt; if (!a) return;
+  const st = a.steps[a.si];
+  if (st && st.k === 'pencil' && (a.sub.phase || 'work') === 'work') {
+    TIMER = setInterval(() => { const b = $('#doneBtn'); if (!b) return; const w = pencilWait(); b.disabled = w > 0; b.textContent = w > 0 ? `I’m done (${w}s)` : 'I’m done — show answers'; if (w <= 0) clearInterval(TIMER); }, 1000);
+  }
+  const si = $('#shortIn'); if (si) si.focus();
+};
+function explainCard(i, isInterject) {
+  const a = S.attempt, L = curLesson(), c = L.explain[i];
+  const left = CONFIG.EXPLAIN_CAP - (L.explainUsed || 0), alts = a.alt[i] || [];
+  return `<div class="card">
+  <div class="step-label">${isInterject ? 'Let’s look at this again 👀' : `Learn · ${i + 1} of ${L.explain.length}`}</div>
+  ${c.visual ? `<div class="visual">${esc(c.visual)}</div>` : ''}
+  <p class="explain-text">${esc(c.text)}</p>
+  ${alts.map(t => `<div class="alt"><div class="alt-h">Another way to see it 💡</div><p>${esc(t)}</p></div>`).join('')}
+  <button class="ghost" data-a="explainDiff" data-v="${i}" ${left <= 0 || EXPLAINING ? 'disabled' : ''}>${EXPLAINING ? 'Thinking… 🤔' : '🔄 Explain it differently'} <small>(${Math.max(0, left)} left)</small></button>
+  <button class="big primary" data-a="${isInterject ? 'endInterject' : 'next'}">${isInterject ? 'Back to practice →' : 'Next →'}</button></div>`;
+}
+function reteachCard(r) {
+  const L = S.lessons[r.lessonId], c = L && L.explain[clamp(r.q.explainRef || 0, 0, L.explain.length - 1)];
+  if (r.cause === 'idea' && c) return `<div class="card"><div class="step-label">Let’s look at the idea again 👀</div>${c.visual ? `<div class="visual">${esc(c.visual)}</div>` : ''}<p class="explain-text">${esc(c.text)}</p><button class="big primary" data-a="seenReteach">Try it again →</button></div>`;
+  return `<div class="card"><div class="step-label">Remember this 🧠</div>${r.q.visual ? `<div class="visual">${esc(r.q.visual)}</div>` : ''}<p class="explain-text">${esc(r.q.explanationWrong)}</p><button class="big primary" data-a="seenReteach">Quiz me →</button></div>`;
+}
+A.seenReteach = () => { S.attempt.sub.seen = true; save(); render(); window.scrollTo(0, 0); };
+const passageHTML = P => P.text.split(/\n+/).map(x => `<p>${esc(x)}</p>`).join('');
+function passageCard(P) {
+  return `<div class="card"><div class="step-label">Read 📖</div>${P.title ? `<h2>${esc(P.title)}</h2>` : ''}<div class="passage">${passageHTML(P)}</div>
+  <p class="muted">You can read it again during the questions.</p><button class="big primary" data-a="next">I’ve read it →</button></div>`;
+}
+function exampleCard(i) {
+  const a = S.attempt, L = curLesson(), ex = L.examples[i], shown = a.sub.shown || 0, all = shown >= ex.steps.length;
+  return `<div class="card">
+  <div class="step-label">Watch me solve it · ${i + 1} of ${L.examples.length}</div>
+  ${ex.title ? `<h2>${esc(ex.title)}</h2>` : ''}
+  ${ex.visual ? `<div class="visual">${esc(ex.visual)}</div>` : ''}
+  <p class="prompt">${esc(ex.problem)}</p>
+  <ol class="steps">${ex.steps.slice(0, shown).map(s => `<li>${esc(s)}</li>`).join('')}</ol>
+  ${all ? `${ex.answer ? `<div class="answer-line">✅ ${esc(ex.answer)}</div>` : ''}<button class="big primary" data-a="next">Next →</button>`
+        : `<button class="big secondary" data-a="revealStep">${shown ? 'Show the next step 👇' : 'Show the first step 👇'}</button>`}</div>`;
+}
+const PENCIL_WAIT = 45;
+function pencilWait() { const a = S.attempt; return Math.max(0, PENCIL_WAIT - Math.floor((Date.now() - (a.sub.t0 || Date.now())) / 1000)); }
+function pencilCard(i) {
+  const a = S.attempt, P = curLesson().offscreen[i];
+  if (!a.sub.t0) { a.sub.t0 = Date.now(); save(); }
+  const phase = a.sub.phase || 'work';
+  if (phase === 'work') {
+    const w = pencilWait();
+    return `<div class="card"><div class="big-emoji" style="text-align:center">✏️📄</div>
+    <div class="step-label">Pencil time · about ${P.minutes} minutes</div><h2>${esc(P.title)}</h2>
+    ${P.instructions ? `<p style="font-size:20px">${esc(P.instructions)}</p>` : ''}
+    <ol class="problems">${P.problems.map(p => `<li>${esc(p)}</li>`).join('')}</ol>
+    <p class="muted">Work these out on paper. Show your thinking!</p>
+    <button class="big primary" id="doneBtn" data-a="pencilDone" ${w > 0 ? 'disabled' : ''}>${w > 0 ? `I’m done (${w}s)` : 'I’m done — show answers'}</button></div>`;
+  }
+  return `<div class="card"><div class="step-label">Check your paper ✅</div><h2>${esc(P.title)}</h2>
+  <ol class="problems">${P.problems.map((p, j) => `<li>${esc(p)}<br><b style="color:var(--good)">${esc(P.answers[j] || '—')}</b></li>`).join('')}</ol>
+  <h2 style="text-align:center">How many did you get right?</h2>
+  <div class="selfscore">${P.problems.map((_, j) => j).concat(P.problems.length).map(n => `<button data-a="pencilScore" data-v="${n}">${n}</button>`).join('')}</div></div>`;
+}
+A.pencilDone = () => { if (pencilWait() > 0) return; S.attempt.sub.phase = 'answers'; save(); render(); };
+A.pencilScore = v => {
+  const a = S.attempt, st = a.steps[a.si], P = curLesson().offscreen[st.i], n = clamp(+v, 0, P.problems.length);
+  a.pencil.push({ i: st.i, right: n, of: P.problems.length });
+  a.ptsPencil += n * CONFIG.POINTS.perCorrect;
+  toast(n === P.problems.length ? 'All of them! Amazing! 🌟' : n ? `+${n * CONFIG.POINTS.perCorrect} points. Nice work! ✏️` : 'Thanks for being honest. That’s how we learn! 💪');
+  advance();
+};
+A.revealStep = () => { S.attempt.sub.shown = (S.attempt.sub.shown || 0) + 1; save(); render(); };
+function questionCard(q, label, isPractice) {
+  const a = S.attempt, fb = a.sub.fb;
+  let body = '';
+  if (q.type === 'mcq') {
+    body = `<div class="choices">${q.choices.map((c, i) => `<button class="choice ${fb ? (c === q.answer ? 'right' : c === fb.given ? 'wrong' : '') : ''}" ${fb ? 'disabled' : ''} data-a="answerMcq" data-v="${i}">${esc(c)}</button>`).join('')}</div>`;
+  } else if (q.type === 'numeric') {
+    body = fb ? `<div class="typed ${fb.correct ? 'right' : 'wrong'}">${esc(fb.given)}</div>`
+      : `<div class="typed" id="typed">${INPUT.text ? esc(INPUT.text) : '<span class="ph">Tap the keys. Fractions: 3 / 4. Mixed: 1 space 1 / 2</span>'}</div>
+      <div class="keypad">${['7', '8', '9', '/', '4', '5', '6', '.', '1', '2', '3', 'sp', '0', 'del', 'ok'].map(k =>
+        k === 'ok' ? `<button class="k-check" style="grid-column:span 2" data-a="key" data-v="ok">Check ✓</button>`
+        : `<button class="${k === 'sp' || k === 'del' ? 'k-sm' : ''}" data-a="key" data-v="${k}">${k === 'sp' ? 'space' : k === 'del' ? '⌫' : k}</button>`).join('')}</div>`;
+  } else if (q.type === 'short') {
+    body = fb ? `<div class="typed ${fb.correct ? 'right' : 'wrong'}">${esc(fb.given)}</div>`
+      : `<input id="shortIn" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Type your answer" style="font-size:24px">
+      <button class="big primary" data-a="answerShort">Check ✓</button>`;
+  } else if (q.type === 'order') {
+    const shuf = a.sub.shuf || q.answer;
+    if (fb) body = `<p class="muted">Your order:</p><ol class="order-chosen">${fb.given.map(x => `<li>${esc(x)}</li>`).join('')}</ol>`;
+    else {
+      const chosen = INPUT.order;
+      body = `<p class="muted">Tap them in order, first to last.</p>
+      ${chosen.length ? `<ol class="order-chosen">${chosen.map(i => `<li>${esc(shuf[i])}</li>`).join('')}</ol>` : ''}
+      <div class="order-pick">${shuf.map((x, i) => chosen.includes(i) ? '' : `<button data-a="orderPick" data-v="${i}">${esc(x)}</button>`).join('')}</div>
+      <div class="row">${chosen.length ? `<button class="ghost" data-a="orderUndo">↩ Undo</button>` : ''}
+      ${chosen.length === shuf.length ? `<button class="big primary" data-a="answerOrder">Check ✓</button>` : ''}</div>`;
+    }
+  }
+  return `<div class="card">
+  <div class="qlabel"><span class="step-label">${label}</span>${isPractice ? `<span class="tier" title="Level">${'★'.repeat(q.tier)}${'☆'.repeat(3 - q.tier)}</span>` : ''}</div>
+  ${q.visual ? `<div class="visual">${esc(q.visual)}</div>` : ''}
+  <h2 class="prompt">${esc(q.prompt)}</h2>
+  ${curLesson() && curLesson().passage && S.attempt.lessonId ? `<details class="psg"><summary>📖 Reread the passage</summary><div class="passage">${passageHTML(curLesson().passage)}</div></details>` : ''}
+  ${body}
+  ${fb ? feedbackView(q, fb) : `<button class="flag" data-a="flagQ">🚩 This question looks wrong</button>`}</div>`;
+}
+const CHEERS = ['Yes! 🎉', 'Nailed it! ⭐', 'You got it! 🙌', 'Awesome! 🚀', 'Correct! 💪', 'Great thinking! 🧠'];
+const answerText = q => q.type === 'order' ? q.answer.join(' → ') : q.answer;
+function feedbackView(q, fb) {
+  if (fb.correct) return `<div class="fb good"><div class="fb-h">${fb.cheer} <span style="float:right">+${CONFIG.POINTS.perCorrect}</span></div>
+    ${fb.levelUp ? '<p>Level up! Trickier ones coming. ⬆️</p>' : ''}<button class="big primary" data-a="next">Next →</button></div>`;
+  return `<div class="fb soft"><div class="fb-h">Not quite — here’s why…</div>
+    <p>${esc(q.explanationWrong)}</p><p>Answer: <b>${esc(answerText(q))}</b></p>
+    ${q.type === 'short' ? `<button class="link" data-a="meantThat">My answer means the same thing</button>` : ''}
+    <div class="cause"><div class="alt-h">What happened? (optional)</div>
+      <div class="row">${Object.entries(CAUSES).map(([k, [e, t]]) => `<button class="ghost ${fb.cause === k ? 'on' : ''}" data-a="setCause" data-v="${k}">${e} ${t}</button>`).join('')}</div>
+      ${fb.cause ? `<p class="muted" style="margin:8px 0 0">${fb.cause === 'slip' ? 'No worries, everybody slips! You’ll get another try soon.' : fb.cause === 'fact' ? 'That’s okay. We’ll practice that fact again.' : 'Good to know. We’ll look at the idea again before you try it.'}</p>` : ''}</div>
+    <button class="big primary" data-a="next">Got it →</button>
+    <button class="flag" data-a="flagQ">🚩 I think the answer key is wrong</button></div>`;
+}
+/* ---------- input ---------- */
+A.key = k => {
+  if (S.attempt?.sub.fb) return;
+  if (k === 'ok') { if (str(INPUT.text)) submitAnswer(str(INPUT.text)); return; }
+  if (k === 'del') INPUT.text = INPUT.text.slice(0, -1);
+  else if (k === 'sp') { if (INPUT.text && !INPUT.text.endsWith(' ')) INPUT.text += ' '; }
+  else if (INPUT.text.length < 14) INPUT.text += k;
+  const t = $('#typed'); if (t) t.innerHTML = INPUT.text ? esc(INPUT.text) : '<span class="ph">Tap the keys</span>';
+};
+A.answerMcq = i => { const q = curQ(); submitAnswer(q.choices[+i]); };
+A.answerShort = () => { const v = str($('#shortIn')?.value); if (v) submitAnswer(v); };
+A.orderPick = i => { INPUT.order.push(+i); render(); };
+A.orderUndo = () => { INPUT.order.pop(); render(); };
+A.answerOrder = () => { const shuf = S.attempt.sub.shuf; submitAnswer(INPUT.order.map(i => shuf[i])); };
+/* ---------- grading (local) ---------- */
+function numericMatch(given, q) {
+  const n = s => String(s).trim().toLowerCase().replace(/\s+/g, ' ');
+  const keys = [q.answer, ...(q.accept || [])];
+  if (keys.some(k => n(k) === n(given))) return true;
+  const b = parseNumber(given); if (!b) return false;
+  return keys.some(k => {
+    const a = parseNumber(k); if (!a || !near(a.v, b.v)) return false;
+    // If the key is a fraction in lowest terms, the answer must be in lowest terms too (e.g. "simplify 6/8").
+    if (a.frac && gcd(a.frac.fp.n, a.frac.fp.d) === 1 && b.frac && gcd(b.frac.fp.n, b.frac.fp.d) !== 1) return false;
+    if (a.frac && b.kind === 'dec' && /fraction/i.test(q.prompt)) return false;
+    return true;
+  });
+}
+function judge(q, given) {
+  if (q.type === 'mcq') return given === q.answer;
+  if (q.type === 'numeric') return numericMatch(given, q);
+  if (q.type === 'order') return Array.isArray(given) && given.length === q.answer.length && given.every((x, i) => x === q.answer[i]);
+  const n = s => String(s).toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+  return [q.answer, ...(q.accept || [])].some(k => n(k) === n(given)) || numericMatch(given, { answer: q.answer, accept: q.accept, prompt: q.prompt });
+}
+function submitAnswer(given) {
+  const a = S.attempt, st = a.steps[a.si], q = curQ();
+  if (!q || a.sub.fb) return;
+  const correct = judge(q, given), sec = secOf(st);
+  const rec = { si: a.si, sec, qid: q.id, exp: q.exp || '', helped: sec !== 'warm' && !!(a.helped || {})[q.explainRef || 0], correct, given: Array.isArray(given) ? given.join(' → ') : given, tier: q.tier, prompt: q.prompt, answer: answerText(q) };
+  a.answers.push(rec);
+  const fb = { correct, given, cheer: pick(CHEERS) };
+  if (correct) a.pts += CONFIG.POINTS.perCorrect;
+  if (st.k === 'practice') {
+    if (correct) { a.run = a.run > 0 ? a.run + 1 : 1; if (a.run >= 2) { if (a.tier < 3) { a.tier++; fb.levelUp = true; } a.run = 0; a.maxTier = Math.max(a.maxTier, a.tier); } }
+    else { a.run = a.run < 0 ? a.run - 1 : -1; if (a.run <= -2) { if (a.tier > 1) a.tier--; a.run = 0; a.pendingInterject = q.explainRef || 0; } }
+  }
+  if (st.k === 'warm') { const r = S.review.find(x => x.id === st.id); if (r) reviewUpdate(r, correct); }
+  else if (!correct) addToReview(a.lessonId, q);
+  a.sub.fb = fb; touch(); save(); render();
+}
+A.meantThat = () => {
+  const a = S.attempt, st = a.steps[a.si], rec = a.answers[a.answers.length - 1], q = curQ();
+  if (!rec || rec.correct) return;
+  rec.correct = true; rec.selfCorrected = true; a.pts += CONFIG.POINTS.perCorrect;
+  if (st.k === 'warm') { const r = S.review.find(x => x.id === st.id); if (r) { r.box = Math.max(1, r.box); reviewUpdate(r, true); } }
+  else { S.review = S.review.filter(r => !(r.lessonId === a.lessonId && r.q.id === q.id)); nbUnmiss(a.lessonId, q.id); }
+  if (st.k === 'practice') { a.run = 1; a.pendingInterject = null; }
+  a.sub.fb.correct = true; save(); render();
+};
+A.next = () => {
+  const a = S.attempt, st = a.steps[a.si];
+  touch();
+  if (st.k === 'practice') {
+    a.sub.done = (a.sub.done || 0) + 1; a.sub.q = null; a.sub.fb = null; a.sub.shuf = null; INPUT = { text: '', order: [] };
+    if (a.pendingInterject != null) { a.interject = a.pendingInterject; a.pendingInterject = null; (a.helped = a.helped || {})[a.interject] = true; }
+    if (a.sub.done >= st.n && a.interject == null) { advance(); return; }
+    save(); render(); window.scrollTo(0, 0); return;
+  }
+  advance();
+};
+A.endInterject = () => { const a = S.attempt, st = a.steps[a.si]; a.interject = null; if ((a.sub.done || 0) >= st.n) { advance(); return; } save(); render(); window.scrollTo(0, 0); };
+function advance() {
+  const a = S.attempt; a.si++; a.sub = {}; a.interject = null; INPUT = { text: '', order: [] }; touch(); save();
+  if (a.si >= a.steps.length) finishAttempt(); else { render(); window.scrollTo(0, 0); }
+}
+/* ---------- flag a bad question (goes to Mom; not counted against her) ---------- */
+A.flagQ = () => {
+  const a = S.attempt, st = a.steps[a.si], q = curQ(); if (!q) return;
+  if (!confirm('Tell Mom this question looks wrong? It won’t count against you.')) return;
+  const lessonId = st.k === 'warm' ? (S.review.find(r => r.id === st.id)?.lessonId || a.lessonId) : a.lessonId;
+  const rec = a.sub.fb ? a.answers[a.answers.length - 1] : null;
+  S.flags.push({ id: uid(), lessonId, qid: q.id, prompt: q.prompt, answer: answerText(q), given: rec ? rec.given : '(skipped)', at: Date.now(), status: 'open' });
+  if (rec) { rec.flagged = true; if (rec.correct) a.pts -= CONFIG.POINTS.perCorrect; }
+  else a.answers.push({ si: a.si, sec: secOf(st), qid: q.id, flagged: true, skipped: true, prompt: q.prompt });
+  S.review = S.review.filter(r => !(r.lessonId === lessonId && r.q.id === q.id));
+  S.notebook = S.notebook.filter(n => !(n.lessonId === lessonId && n.q.id === q.id));
+  if (st.k === 'practice') a.pendingInterject = null;
+  toast('Thanks! Mom will check it. 👍');
+  A.next();
+};
+/* ---------- spaced review: a missed question comes back today, then after 1, 3 and 7 days; 4 right in a row retires it ---------- */
+/* ---------- "My mistakes" notebook: every missed question, across lessons, until she beats it ---------- */
+const CAUSES = { slip: ['😅', 'Silly slip'], fact: ['🧠', 'Forgot a fact'], idea: ['💡', 'Didn’t get the idea'] };
+const nbFor = (lessonId, qid) => S.notebook.find(n => n.lessonId === lessonId && n.q.id === qid);
+function nbMiss(lessonId, q) {
+  const subject = (S.lessons[lessonId] && S.lessons[lessonId].meta.subject) || 'math';
+  let n = nbFor(lessonId, q.id);
+  if (n) { n.misses++; n.status = 'open'; n.last = Date.now(); n.good = 0; }
+  else { S.notebook.push({ id: uid(), lessonId, subject, q: JSON.parse(JSON.stringify(q)), cause: '', misses: 1, good: 0, status: 'open', first: Date.now(), last: Date.now() }); }
+  if (S.notebook.length > 150) { const i = S.notebook.findIndex(x => x.status === 'conquered'); S.notebook.splice(i >= 0 ? i : 0, 1); }
+}
+function nbUnmiss(lessonId, qid) { const n = nbFor(lessonId, qid); if (!n) return; if (n.misses <= 1) S.notebook = S.notebook.filter(x => x !== n); else n.misses--; }
+function addToReview(lessonId, q) {
+  if (!lessonId) return;
+  nbMiss(lessonId, q);
+  const ex = S.review.find(r => r.lessonId === lessonId && r.q.id === q.id);
+  if (ex) { ex.box = 1; ex.due = todayStr(); return; }
+  S.review.push({ id: uid(), lessonId, q: JSON.parse(JSON.stringify(q)), box: 1, due: todayStr(), cause: '' });
+  if (S.review.length > 80) S.review.shift();
+}
+/* Silly slips are retired after 2 right answers; forgotten facts and misunderstood ideas need 4 (spread over days). */
+function reviewUpdate(r, correct) {
+  const n = nbFor(r.lessonId, r.q.id);
+  if (correct) {
+    r.box++;
+    if (n) n.good = (n.good || 0) + 1;
+    if (r.box > (r.cause === 'slip' ? 2 : 4)) { S.review = S.review.filter(x => x !== r); if (n) { n.status = 'conquered'; n.done = Date.now(); } return; }
+    r.due = addDays(todayStr(), [0, 0, 1, 3, 7][r.box]);
+  } else { r.box = 1; r.due = addDays(todayStr(), 1); if (n) { n.misses++; n.status = 'open'; n.good = 0; n.last = Date.now(); } }
+}
+A.setCause = v => {
+  const a = S.attempt, st = a.steps[a.si], q = curQ(), rec = a.answers[a.answers.length - 1];
+  if (!q || !CAUSES[v] || !a.sub.fb || a.sub.fb.correct) return;
+  const lessonId = st.k === 'warm' ? (S.review.find(r => r.id === st.id) || {}).lessonId || a.lessonId : a.lessonId;
+  a.sub.fb.cause = v; if (rec) rec.cause = v;
+  const n = nbFor(lessonId, q.id); if (n) n.cause = v;
+  const r = S.review.find(x => x.lessonId === lessonId && x.q.id === q.id); if (r) r.cause = v;
+  save(); render();
+};
+/* ---------- explain differently (live Claude call, capped) ---------- */
+let EXPLAINING = false;
+A.explainDiff = async i => {
+  const a = S.attempt, L = curLesson(); i = +i;
+  if (EXPLAINING || (L.explainUsed || 0) >= CONFIG.EXPLAIN_CAP) return;
+  if (!S.settings.apiKey) { toast('This button needs Mom to add the Claude key.'); return; }
+  EXPLAINING = true; render();
+  try {
+    const card = L.explain[i], prev = a.alt[i] || [];
+    const text = await callClaude({
+      model: CONFIG.EXPLAIN_MODEL, effort: 'low', maxTokens: 2000,
+      system: 'You are a great Grade 5 teacher in Ontario, Canada. A curious 10-year-old did not understand an explanation. Explain the SAME idea a different way, starting with a different everyday example (snacks, games, money, sports, pets). Max 60 words. Short sentences. One idea. Kind and upbeat. No religious framing. Plain text only: no markdown, no greeting, no question back to the child.',
+      content: [{ type: 'text', text: `Lesson: ${L.meta.title} (${SUBJECTS[L.meta.subject]?.label}, Grade 5)\nThe explanation she didn't get:\n${card.text}\n${prev.length ? 'Other ways already tried:\n' + prev.join('\n') : ''}` }],
+    });
+    const t = str(text).replace(/[*_#`]/g, '');
+    if (t) { (a.alt[i] = prev).push(t); L.explainUsed = (L.explainUsed || 0) + 1; (a.helped = a.helped || {})[i] = true; }
+  } catch (e) { toast(e.message === 'NETWORK' ? 'No internet right now. Try again later.' : 'That didn’t work. Try again in a minute.'); }
+  EXPLAINING = false; save(); if (view.name === 'play') render();
+};
+
+/* ---------- finish: points, streak, results for Mom ---------- */
+function addPoints(n, why) { if (!n) return; S.points.balance += n; S.points.earned += Math.max(0, n); S.points.log.push({ t: Date.now(), n, why }); if (S.points.log.length > 400) S.points.log.splice(0, 100); }
+function bumpStreak() {
+  const t = todayStr(), s = S.streak;
+  if (s.last === t) return 0;
+  s.count = s.last === addDays(t, -1) ? s.count + 1 : 1; s.last = t; s.best = Math.max(s.best, s.count);
+  return s.count % CONFIG.POINTS.streakEvery === 0 ? CONFIG.POINTS.streakBonus : 0;
+}
+function finishAttempt() {
+  const a = S.attempt; if (!a) return;
+  touch();
+  if (a.mode === 'review') {
+    const got = a.answers.filter(x => !x.flagged), right = got.filter(x => x.correct).length;
+    addPoints(a.pts, 'Review'); S.attempt = null; save();
+    go('reviewDone', { pts: a.pts, right, total: got.length }); return;
+  }
+  const L = curLesson();
+  if (!L) { S.attempt = null; save(); go('kidHome'); return; }
+  const scored = a.answers.filter(x => !x.flagged && !x.skipped);
+  const chk = scored.filter(x => x.sec === 'check'), prac = scored.filter(x => x.sec === 'practice');
+  const chkRight = chk.filter(x => x.correct).length;
+  const chkFree = chk.filter(x => !x.helped), basis = chkFree.length ? chkFree : chk, basisRight = basis.filter(x => x.correct).length;
+  const perfect = chk.length > 0 && chkRight === chk.length;
+  const bd = [['Lesson complete', L.reward?.pointsBase || CONFIG.POINTS.lessonBase]];
+  if (a.pts) bd.push(['Correct answers', a.pts]);
+  if (a.ptsPencil) bd.push(['Pencil work', a.ptsPencil]);
+  if (perfect) bd.push(['Perfect check!', CONFIG.POINTS.perfectCheck]);
+  const sb = bumpStreak(); if (sb) bd.push([`${S.streak.count}-day streak bonus`, sb]);
+  const total = bd.reduce((s, x) => s + x[1], 0);
+  addPoints(total, 'Lesson: ' + L.meta.title);
+  const r = {
+    id: uid(), lessonId: L.id, title: L.meta.title, subject: L.meta.subject, at: Date.now(),
+    minutes: Math.max(1, Math.round(a.active / 60000)),
+    mastery: basis.length ? Math.round(100 * basisRight / basis.length) : 0, masteryRight: basisRight, masteryTotal: basis.length, helpedCount: chk.length - chkFree.length, allHelped: chk.length > 0 && !chkFree.length, checkRight: chkRight, checkTotal: chk.length,
+    causes: scored.reduce((m, x) => { if (!x.correct && x.cause) m[x.cause] = (m[x.cause] || 0) + 1; return m; }, {}),
+    practiceRight: prac.filter(x => x.correct).length, practiceTotal: prac.length, maxTier: a.maxTier,
+    pencil: a.pencil, explainUsed: L.explainUsed || 0,
+    missed: scored.filter(x => !x.correct).map(x => ({ sec: x.sec, prompt: x.prompt, given: x.given, answer: x.answer })),
+    flagged: a.answers.filter(x => x.flagged).map(x => x.prompt),
+    expectations: L.meta.expectations.slice(),
+    byExp: scored.reduce((m, x) => { if (x.exp && !x.helped && (x.sec === 'practice' || x.sec === 'check')) { const e = m[x.exp] = m[x.exp] || [0, 0]; e[1]++; if (x.correct) e[0]++; } return m; }, {}),
+    points: total, breakdown: bd, accepted: false,
+  };
+  S.results.unshift(r); if (S.results.length > 200) S.results.pop();
+  L.status = 'done';
+  const nx = nextInSequence(L);
+  S.todayLessonId = nx && nx.lesson ? nx.lesson.id : null;
+  S.attempt = null; save();
+  go('reward', { rid: r.id });
+}
+function nextInSequence(L) {
+  const seq = S.sequences[L.meta.sequenceId]; if (!seq) return null;
+  const k = seq.lessons.findIndex(e => e.lessonId === L.id), e = seq.lessons[k + 1];
+  if (k < 0 || !e || e.status === 'deleted') return null;
+  return { entry: e, lesson: e.lessonId ? S.lessons[e.lessonId] : null };
+}
+VIEWS.reward = ({ rid }) => {
+  const r = S.results.find(x => x.id === rid); if (!r) return VIEWS.kidHome();
+  const L = S.lessons[r.lessonId], nx = L && nextInSequence(L), toReview = S.review.filter(x => x.lessonId === r.lessonId).length;
+  return `
+<div class="center-screen reward">
+  <div class="badge pop">${r.mastery === 100 ? '🏆' : r.mastery >= 70 ? '🏅' : '⭐'}</div>
+  <h1>Lesson complete!</h1>
+  <p class="big-points">+${r.points} points</p>
+  <ul class="breakdown">${r.breakdown.map(([k, v]) => `<li><span>${esc(k)}</span><b>+${v}</b></li>`).join('')}</ul>
+  <div class="stats"><div class="stat">🔥<b>${S.streak.count}</b><span>day streak</span></div><div class="stat">⭐<b>${S.points.balance}</b><span>points</span></div><div class="stat">✅<b>${r.checkRight}/${r.checkTotal}</b><span>on the check</span></div></div>
+  ${goalCard(true)}
+  ${toReview ? `<button class="big secondary" data-a="startReview" data-v="${r.lessonId}">🔁 Review your mistakes (${toReview})</button>` : ''}
+  ${nx ? (nx.lesson ? `<div class="card"><b>Up next:</b> ${esc(nx.lesson.meta.title)}<br><span class="muted">It’s ready for next time.</span></div>` : `<div class="card"><b>Up next:</b> ${esc(nx.entry.title)}<br><span class="muted">Being written. It’ll be ready soon.</span></div>`) : ''}
+  <button class="big ghost" data-a="go" data-v="kidHome">Home</button>
+</div>`;
+};
+VIEWS.reward.after = confetti;
+VIEWS.reviewDone = ({ pts, right, total }) => `
+<div class="center-screen reward"><div class="badge pop">🔁</div><h1>Review done!</h1>
+<p class="big-points">+${pts} points</p><p>You got ${right} of ${total}. ${right === total ? 'Every single one! 🌟' : 'The tricky ones will come back so you can beat them. 💪'}</p>
+<button class="big primary" data-a="go" data-v="kidHome">Home</button></div>`;
+VIEWS.reviewDone.after = confetti;
+function confetti() {
+  const em = ['🎉', '⭐', '✨', '🎊', '💫'];
+  for (let i = 0; i < 26; i++) {
+    const s = document.createElement('span'); s.className = 'confetti'; s.textContent = pick(em);
+    s.style.left = Math.random() * 100 + 'vw'; s.style.animationDuration = 2 + Math.random() * 2.5 + 's'; s.style.animationDelay = Math.random() * 0.8 + 's';
+    document.body.appendChild(s); setTimeout(() => s.remove(), 5500);
+  }
+}
+
+/* ==================================================================
+   Mom: results, flags, rewards, settings
+   ================================================================== */
+VIEWS.results = () => `
+<div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Results</span><span></span></div>
+<div class="card">${S.results.length ? `<ul class="list">${S.results.map(r => `<li class="item"><div class="grow"><div class="t">${esc(r.title)}</div>
+  <div class="s">${fmtDate(r.at)} · ${r.mastery}% · ${r.minutes} min · level ${r.maxTier}/3</div></div>
+  ${r.accepted ? '<span class="chip g">Accepted</span>' : ''}<button class="sm" data-a="openResult" data-v="${r.id}">View</button></li>`).join('')}</ul>` : '<p class="muted">No results yet.</p>'}</div>`;
+VIEWS.result = ({ id }) => {
+  const r = S.results.find(x => x.id === id); if (!r) return VIEWS.results();
+  const pen = r.pencil.reduce((s, p) => [s[0] + p.right, s[1] + p.of], [0, 0]);
+  return `
+<div class="topbar"><button data-a="go" data-v="momHome">← Home</button>${subjChip(r.subject)}</div>
+<div class="card"><h1>${esc(r.title)}</h1><p class="muted">${new Date(r.at).toLocaleString()}</p>
+<div class="stats"><div class="stat"><b>${r.mastery}%</b><span>mastery (check)</span></div><div class="stat"><b>${r.minutes}</b><span>minutes</span></div><div class="stat"><b>${r.maxTier}/3</b><span>top level reached</span></div></div>
+<div class="kv"><span>Check</span><b>${r.checkRight} of ${r.checkTotal}</b>
+${r.helpedCount ? `<span>Mastery counts only answers she got without extra help</span><b>${r.allHelped ? 'all had help' : r.masteryRight + ' of ' + r.masteryTotal}</b>` : ''}
+${r.causes && Object.keys(r.causes).length ? `<span>Why she says she missed them</span><b>${Object.entries(r.causes).map(([k, n]) => `${CAUSES[k][1]} ${n}`).join(', ')}</b>` : ''}<span>Practice</span><b>${r.practiceRight} of ${r.practiceTotal}</b>
+${Object.keys(r.byExp || {}).length ? Object.entries(r.byExp).map(([c, [a, b]]) => `<span>${esc(c)} ${esc(expText(r.subject, c))}</span><b>${a} of ${b}</b>`).join('') : ''}
+<span>Pencil work (her own count)</span><b>${pen[0]} of ${pen[1]}</b><span>“Explain differently” used</span><b>${r.explainUsed} of ${CONFIG.EXPLAIN_CAP}</b><span>Points earned</span><b>${r.points}</b></div>
+${r.accepted ? '<p class="chip g" style="margin-top:14px">Accepted ✓</p>' : `<button class="big primary" data-a="acceptResult" data-v="${r.id}">Accept result</button>`}</div>
+${r.missed.length ? `<h3>Questions she missed (${r.missed.length})</h3><div class="card"><ul class="list">${r.missed.map(m => `<li class="item"><div class="grow"><div class="t">${esc(m.prompt)}</div><div class="s">She said: ${esc(m.given)} · Answer: ${esc(m.answer)}</div></div></li>`).join('')}</ul><p class="muted"><small>These come back in her review sessions automatically.</small></p></div>` : '<div class="card"><p>No missed questions. 🎉</p></div>'}
+${r.flagged.length ? `<h3>She flagged</h3><div class="card"><ul>${r.flagged.map(f => `<li>${esc(f)}</li>`).join('')}</ul><button class="ghost" data-a="go" data-v="flags">Review flags when you have time</button></div>` : ''}`;
+};
+A.openResult = id => go('result', { id });
+A.acceptResult = id => { const r = S.results.find(x => x.id === id); if (r) { r.accepted = true; save(); toast('Accepted ✓'); render(); } };
+VIEWS.flags = () => {
+  const open = S.flags.filter(f => f.status === 'open');
+  return `
+<div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Flagged questions</span><span></span></div>
+${open.length ? open.map(f => `<div class="card"><p class="muted"><small>${esc(S.lessons[f.lessonId]?.meta.title || 'Deleted lesson')} · ${fmtDate(f.at)}</small></p>
+  <h2>${esc(f.prompt)}</h2><div class="kv"><span>App’s answer</span><b>${esc(f.answer)}</b><span>She said</span><b>${esc(f.given)}</b></div>
+  <div class="row" style="margin-top:12px"><button class="ghost danger" data-a="flagRemove" data-v="${f.id}">Remove the question</button>${S.lessons[f.lessonId] ? `<button class="ghost" data-a="flagEdit" data-v="${f.id}">Fix it</button>` : ''}<button class="ghost" data-a="flagKeep" data-v="${f.id}">It’s fine</button></div></div>`).join('')
+    : '<div class="card"><p class="muted">Nothing flagged. 👍</p></div>'}`;
+};
+A.flagKeep = id => { const f = S.flags.find(x => x.id === id); f.status = 'kept'; save(); render(); };
+A.flagRemove = id => {
+  const f = S.flags.find(x => x.id === id), L = S.lessons[f.lessonId];
+  if (L) { L.practice = L.practice.filter(q => q.id !== f.qid || (L.practice.length <= 3)); L.check = L.check.filter(q => q.id !== f.qid || L.check.length <= 2); }
+  S.review = S.review.filter(r => !(r.lessonId === f.lessonId && r.q.id === f.qid));
+  f.status = 'removed'; save(); toast('Removed.'); render();
+};
+A.flagEdit = id => { const f = S.flags.find(x => x.id === id); f.status = 'fixed'; save(); A.editLesson(f.lessonId); };
+
+FORMS.RW = { goal: '', price: '', rname: '', rpts: '' };
+VIEWS.rewards = () => {
+  const rate = S.settings.rate || 100;
+  return `
+<div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Rewards</span><span></span></div>
+<div class="card"><h2>${esc(kidName())} has ${S.points.balance} points</h2><p class="muted">That’s ${money(S.points.balance / rate)} at ${rate} points per $1.</p>
+<label>Points per $1</label><div class="row"><input type="number" inputmode="numeric" min="1" id="rateIn" value="${rate}"><button class="ghost" style="flex:0" data-a="saveRate">Save</button></div></div>
+<h3>Goals (what she’s saving for)</h3>
+<div class="card">${S.goals.length ? `<ul class="list">${S.goals.map(g => `<li class="item"><div class="grow"><div class="t">${esc(g.name)} ${g.done ? '✓' : ''}</div><div class="s">${money(g.price)} = ${Math.round(g.price * rate)} points</div></div>
+  ${g.done ? '<span class="chip g">Got it</span>' : `<button class="sm" data-a="goalBought" data-v="${g.id}">Bought it</button>`}<button class="sm" data-a="goalDel" data-v="${g.id}">✕</button></li>`).join('')}</ul>` : '<p class="muted">No goals yet. Add a toy or treat she wants.</p>'}
+  <div class="row" style="margin-top:10px"><input data-bind="RW:goal" placeholder="e.g. LEGO set" value="${esc(FORMS.RW.goal)}"><input data-bind="RW:price" type="number" inputmode="decimal" placeholder="Price $" style="max-width:130px" value="${esc(FORMS.RW.price)}"><button class="ghost" style="flex:0" data-a="goalAdd">Add</button></div>
+  <p class="muted"><small>The first goal not yet bought shows on her home screen. “Bought it” takes those points off her balance.</small></p></div>
+<h3>Other things points can buy</h3>
+<div class="card">${S.redeemables.length ? `<ul class="list">${S.redeemables.map(r => `<li class="item"><div class="grow t">${esc(r.name)}</div><span class="chip">${r.points} pts</span><button class="sm" data-a="redeem" data-v="${r.id}">Redeem</button><button class="sm" data-a="redeemDel" data-v="${r.id}">✕</button></li>`).join('')}</ul>` : '<p class="muted">e.g. “30 min screen time”, “Pick dinner”.</p>'}
+  <div class="row" style="margin-top:10px"><input data-bind="RW:rname" placeholder="Reward" value="${esc(FORMS.RW.rname)}"><input data-bind="RW:rpts" type="number" inputmode="numeric" placeholder="Points" style="max-width:120px" value="${esc(FORMS.RW.rpts)}"><button class="ghost" style="flex:0" data-a="redeemAdd">Add</button></div></div>
+<h3>How points are earned</h3>
+<div class="card kv"><span>Finish a lesson</span><b>${CONFIG.POINTS.lessonBase}</b><span>Each correct answer</span><b>${CONFIG.POINTS.perCorrect}</b><span>${CONFIG.POINTS.streakEvery}-day streak</span><b>${CONFIG.POINTS.streakBonus}</b><span>Perfect check</span><b>${CONFIG.POINTS.perfectCheck}</b></div>`;
+};
+A.saveRate = () => { const v = Math.round(+$('#rateIn').value); if (v >= 1) { S.settings.rate = v; save(); toast('Saved.'); render(); } };
+A.goalAdd = () => { const n = str(FORMS.RW.goal), p = +FORMS.RW.price; if (!n || !(p > 0)) { toast('Add a name and a price.'); return; } S.goals.push({ id: uid(), name: n, price: Math.round(p * 100) / 100, done: false }); FORMS.RW.goal = ''; FORMS.RW.price = ''; save(); render(); };
+A.goalDel = id => { S.goals = S.goals.filter(g => g.id !== id); save(); render(); };
+A.goalBought = id => {
+  const g = S.goals.find(x => x.id === id), cost = Math.round(g.price * (S.settings.rate || 100));
+  if (S.points.balance < cost && !confirm(`She has ${S.points.balance} of ${cost} points. Mark it bought anyway? Her balance will go to 0.`)) return;
+  if (S.points.balance >= cost && !confirm(`Take ${cost} points for “${g.name}”?`)) return;
+  addPoints(-Math.min(cost, S.points.balance), 'Bought: ' + g.name); g.done = true; save(); render();
+};
+A.redeemAdd = () => { const n = str(FORMS.RW.rname), p = Math.round(+FORMS.RW.rpts); if (!n || !(p > 0)) { toast('Add a reward and points.'); return; } S.redeemables.push({ id: uid(), name: n, points: p }); FORMS.RW.rname = ''; FORMS.RW.rpts = ''; save(); render(); };
+A.redeemDel = id => { S.redeemables = S.redeemables.filter(r => r.id !== id); save(); render(); };
+A.redeem = id => {
+  const r = S.redeemables.find(x => x.id === id);
+  if (S.points.balance < r.points) { toast(`She needs ${r.points - S.points.balance} more points.`); return; }
+  if (!confirm(`Take ${r.points} points for “${r.name}”?`)) return;
+  addPoints(-r.points, 'Redeemed: ' + r.name); save(); toast('Redeemed 🎉'); render();
+};
+
+VIEWS.settings = () => {
+  FORMS.ST = { key: '', name: S.settings.learnerName };
+  const k = S.settings.apiKey;
+  return `
+<div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Settings</span><span></span></div>
+<div class="card"><h2>Claude key</h2>
+<p class="muted">${k ? `Saved on this iPad (ends in …${esc(k.slice(-4))}).` : 'Not added yet. Get one at console.anthropic.com → API Keys.'}</p>
+<input data-bind="ST:key" type="password" placeholder="${k ? 'Paste a new key to replace it' : 'sk-ant-...'}" autocomplete="off">
+<div class="row" style="margin-top:10px"><button class="ghost" data-a="saveKey">Save key</button>${k ? `<button class="ghost" data-a="testKey">Test it</button>` : ''}</div>
+<p class="muted"><small>Lessons use ${esc(CONFIG.AUTHOR_MODEL)}. “Explain it differently” uses ${esc(CONFIG.EXPLAIN_MODEL)}.</small></p></div>
+<div class="card"><h2>Learner</h2><label>First name</label><div class="row"><input data-bind="ST:name" value="${esc(S.settings.learnerName)}"><button class="ghost" style="flex:0" data-a="saveName">Save</button></div></div>
+<div class="card"><h2>Backup</h2><p class="muted">Saves lessons, progress, points and goals to a file (not the key or PIN). ${S.settings.lastExport ? 'Last backup: ' + fmtDate(S.settings.lastExport) + '.' : ''}</p>
+<div class="row"><button class="ghost" data-a="exportData">💾 Save a backup</button><label class="ghost" style="margin:0;text-align:center;cursor:pointer;display:flex;align-items:center;justify-content:center">📂 Restore<input id="importFile" type="file" accept="application/json,.json" style="display:none"></label></div></div>
+<div class="card"><h2>PIN</h2><button class="ghost" data-a="changePin">Change Mom PIN</button></div>
+${!isStandalone() ? `<div class="card"><h2>Keep progress safe</h2><p>On the iPad, tap Share → <b>Add to Home Screen</b> and open the app from that icon. Safari can erase website data after about a week without a visit; the Home Screen app is protected. The icon starts empty, so save a backup here first and restore it there.</p></div>` : ''}
+<div class="card"><h2>Start over</h2><button class="ghost danger" data-a="eraseAll">Erase everything on this iPad</button></div>`;
+};
+A.saveKey = () => { const k = cleanKey(FORMS.ST.key); if (!k) { toast('Paste the key first.'); return; } if (!/^sk-ant-/.test(k) && !confirm('That doesn’t look like a Claude key (they start with sk-ant-). Save anyway?')) return; S.settings.apiKey = k; save(); toast('Key saved.'); render(); pumpSequences(); };
+A.testKey = async (_, el) => {
+  el.disabled = true; el.textContent = 'Testing…';
+  try { await callClaude({ model: CONFIG.EXPLAIN_MODEL, maxTokens: 50, effort: 'low', system: 'Reply with the single word OK.', content: [{ type: 'text', text: 'Test' }] }); toast('The key works ✓'); }
+  catch (e) { alert(friendlyError(e)); }
+  el.disabled = false; el.textContent = 'Test it';
+};
+A.saveName = () => { S.settings.learnerName = str(FORMS.ST.name); save(); toast('Saved.'); };
+A.changePin = () => { pinBuf = ''; go('pin', { mode: 'set1', change: true }); };
+A.eraseAll = () => {
+  if (prompt('This deletes all lessons, progress and points on this iPad. Type ERASE to confirm.') !== 'ERASE') return;
+  localStorage.removeItem(CONFIG.STORAGE_KEY); load(); role = null; GEN = null; go('gate');
+};
+A.exportData = () => {
+  const data = Object.assign({}, S, { settings: Object.assign({}, S.settings, { apiKey: '', pin: null }), attempt: null, app: 'g5-tutor', exportedAt: new Date().toISOString() });
+  const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob), a = document.createElement('a');
+  a.href = url; a.download = `tutor-backup-${todayStr()}.json`; document.body.appendChild(a); a.click();
+  setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
+  S.settings.lastExport = Date.now(); save(); toast('Backup saved to your Files / Downloads.'); if (view.name === 'momHome' || view.name === 'settings') render();
+};
+function importData(file) {
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const d = JSON.parse(r.result);
+      if (!d || !d.lessons || !d.settings || !d.points) throw new Error('bad');
+      if (!confirm('Replace everything on this iPad with this backup?')) return;
+      const keep = { apiKey: S.settings.apiKey, pin: S.settings.pin };
+      delete d.app; delete d.exportedAt;
+      S = Object.assign(DEFAULT_STATE(), d);
+      S.settings = Object.assign(DEFAULT_STATE().settings, d.settings, { apiKey: keep.apiKey || '', pin: keep.pin || d.settings.pin || null, welcomed: true });
+      S.points = Object.assign(DEFAULT_STATE().points, d.points); S.streak = Object.assign(DEFAULT_STATE().streak, d.streak || {});
+      save(); toast('Restored ✓'); go('momHome');
+    } catch (e) { toast('That file isn’t a backup from this app.'); }
+  };
+  r.readAsText(file);
+}
+
+/* ==================================================================
+   Boot
+   ================================================================== */
+function makeIcon() {
+  try {
+    const c = document.createElement('canvas'); c.width = c.height = 180; const g = c.getContext('2d');
+    const gr = g.createLinearGradient(0, 0, 180, 180); gr.addColorStop(0, '#5B4BDB'); gr.addColorStop(1, '#FF8A3D');
+    g.fillStyle = gr; g.fillRect(0, 0, 180, 180);
+    g.font = '110px -apple-system, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('⭐', 90, 98);
+    const l = document.createElement('link'); l.rel = 'apple-touch-icon'; l.href = c.toDataURL('image/png'); document.head.appendChild(l);
+  } catch (_) {}
+}
+load();
+if (S.settings.apiKey) { const ck = cleanKey(S.settings.apiKey); if (ck !== S.settings.apiKey) { S.settings.apiKey = ck; save(); } }
+makeIcon();
+if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+document.addEventListener('visibilitychange', () => { if (S.attempt) { if (document.hidden) { touch(); save(); } else S.attempt.tick = Date.now(); } });
+render();
+setTimeout(pumpSequences, 4000);
+</script>
+</body>
+</html>
