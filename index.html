@@ -299,7 +299,7 @@ const CONFIG = {
   DEFAULT_RATE: 100,             // points per $1 (Mom can change this in Rewards)
   STORAGE_KEY: 'g5tutor.v1',
   SHOW_MONEY: false,             // learner screens: show dollars earned + goal progress (parked for now; points still show)
-  VERSION: 'v9 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
+  VERSION: 'v10 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -1844,11 +1844,13 @@ function finishAttempt() {
     pencil: a.pencil, explainUsed: L.explainUsed || 0,
     missed: scored.filter(x => !x.correct).map(x => ({ sec: x.sec, prompt: x.prompt, given: x.given, answer: x.answer })),
     flagged: a.answers.filter(x => x.flagged).map(x => x.prompt),
+    log: scored.map(x => ({ sec: x.sec, prompt: String(x.prompt).slice(0, 160), given: String(x.given == null ? '' : x.given).slice(0, 80), answer: String(x.answer || '').slice(0, 100), ok: !!x.correct, help: !!x.helped, cause: x.cause || '', tier: x.tier || 0, kind: x.type || '' })),
     expectations: L.meta.expectations.slice(),
     byExp: scored.reduce((m, x) => { if (x.exp && !x.helped && (x.sec === 'practice' || x.sec === 'check')) { const e = m[x.exp] = m[x.exp] || [0, 0]; e[1]++; if (x.correct) e[0]++; } return m; }, {}),
     points: total, breakdown: bd, accepted: false,
   };
   S.results.unshift(r); if (S.results.length > 600) S.results.pop();
+  S.results.slice(80).forEach(x => { delete x.log; }); // keep the full question-by-question log for the latest 80 lessons only
   sfx('win');
   L.status = 'done';
   const nx = nextInSequence(L);
@@ -1925,6 +1927,9 @@ ${r.causes && Object.keys(r.causes).length ? `<span>Why she says she missed them
 ${Object.keys(r.byExp || {}).length ? Object.entries(r.byExp).map(([c, [a, b]]) => `<span>${esc(c)} ${esc(expText(r.subject, c))}</span><b>${a} of ${b}</b>`).join('') : ''}
 <span>Pencil work (her own count)</span><b>${pen[0]} of ${pen[1]}</b><span>“Explain differently” used</span><b>${r.explainUsed} of ${CONFIG.EXPLAIN_CAP}</b><span>Points earned</span><b>${r.points}</b></div>
 ${r.accepted ? '<p class="chip g" style="margin-top:14px">Accepted ✓</p>' : `<button class="big primary" data-a="acceptResult" data-v="${r.id}">Accept result</button>`}</div>
+${r.log && r.log.length ? `<h3>Every question (${r.log.length})</h3><div class="card"><ul class="list">${r.log.map((x, i) => `<li class="item"><span class="chip ${x.ok ? 'g' : ''}" style="${x.ok ? '' : 'background:var(--soft-bg);color:var(--soft)'}">${x.ok ? '✓' : '✗'}</span><div class="grow"><div class="t">${esc(x.prompt)}</div>
+  <div class="s">${x.sec === 'check' ? 'Check' : x.sec === 'practice' ? 'Practice' : 'Warm-up'}${x.tier ? ' · level ' + x.tier : ''}${x.kind && ['match', 'sort', 'fraction', 'numberline', 'order'].includes(x.kind) ? ' · hands-on' : ''} · She: ${esc(x.given)}${x.ok ? '' : ' · Answer: ' + esc(x.answer)}${x.help ? ' · <b>had extra help</b>' : ''}${x.cause ? ' · ' + esc(CAUSES[x.cause] ? CAUSES[x.cause][1] : '') : ''}</div></div></li>`).join('')}</ul></div>` : ''}
+${r.pencil && r.pencil.length ? `<div class="card"><b>Pencil work (her own count):</b> ${r.pencil.map(p => `task ${p.i + 1}: ${p.right} of ${p.of}`).join(' · ')}</div>` : ''}
 ${r.missed.length ? `<h3>Questions she missed (${r.missed.length})</h3><div class="card"><ul class="list">${r.missed.map(m => `<li class="item"><div class="grow"><div class="t">${esc(m.prompt)}</div><div class="s">She said: ${esc(m.given)} · Answer: ${esc(m.answer)}</div></div></li>`).join('')}</ul><p class="muted"><small>These come back in her review sessions automatically.</small></p></div>` : '<div class="card"><p>No missed questions. 🎉</p></div>'}
 ${r.flagged.length ? `<h3>She flagged</h3><div class="card"><ul>${r.flagged.map(f => `<li>${esc(f)}</li>`).join('')}</ul><button class="ghost" data-a="go" data-v="flags">Review flags when you have time</button></div>` : ''}`;
 };
