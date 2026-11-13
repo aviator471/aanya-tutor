@@ -243,6 +243,30 @@ label{display:block;font-weight:600;margin:16px 0 6px}
 @keyframes fall{to{transform:translateY(110vh) rotate(540deg)}}
 @keyframes wiggle{0%,100%{transform:rotate(-12deg)}50%{transform:rotate(12deg)}}
 @keyframes shine{0%,100%{opacity:.0}50%{opacity:.9}}
+.choice.right{animation:happy .5s cubic-bezier(.2,1.4,.4,1)}
+.choice.wrong{animation:nudge .45s}
+.fbtop{display:flex;align-items:center;gap:12px}.fbtop .pip{flex:none;animation:bob 2.4s ease-in-out infinite}
+.plus{margin-left:6px;font-size:18px;opacity:.8}
+.combo{font-weight:800;font-size:19px;color:var(--soft);margin:6px 0}
+.mt-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 22px}.mt-grid>div{display:grid;gap:12px;align-content:start}
+.mt{min-height:62px;border-radius:20px;background:var(--card);border:2px solid var(--line);padding:10px 14px;font-size:19px;font-weight:650;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.mt.sel{border-color:var(--primary);box-shadow:0 0 0 4px rgba(91,91,240,.18);transform:scale(1.02)}
+.mt.done{background:color-mix(in srgb,var(--c) 14%,white);border-color:var(--c);color:var(--ink);opacity:1}
+.tray{display:flex;flex-wrap:wrap;gap:10px;min-height:56px;padding:12px;background:var(--fill);border-radius:22px;margin-bottom:14px;align-items:center;justify-content:center}
+.sc{background:var(--card);border:2px solid var(--line);border-radius:999px;padding:10px 18px;font-size:19px;font-weight:650;box-shadow:0 2px 6px rgba(0,0,0,.08);font-style:normal}
+.sc.sel{border-color:var(--primary);box-shadow:0 0 0 4px rgba(91,91,240,.2);transform:scale(1.06)}
+.sc.in{box-shadow:none;font-size:16px;padding:6px 12px;display:inline-block;margin:3px}
+.buckets{display:grid;gap:12px;grid-template-columns:repeat(2,1fr)}.buckets.n3{grid-template-columns:repeat(3,1fr)}
+.bk{min-height:130px;border-radius:24px;border:3px dashed var(--c);background:color-mix(in srgb,var(--c) 8%,transparent);padding:12px 10px;display:flex;flex-direction:column;align-items:center;gap:8px}
+.bk b{font-family:var(--rounded);font-size:19px;color:var(--c)}
+.bk span{display:flex;flex-wrap:wrap;justify-content:center}
+.fracwrap{display:flex;justify-content:center;margin:6px 0}
+.frac{width:min(100%,300px);height:auto;touch-action:manipulation}.frac:not(.pizza){width:100%}
+.frac .wedge{fill:#FFF1CF;stroke:#fff;stroke-width:3;cursor:pointer;transition:fill .15s}.frac .wedge.on{fill:#FFB84D}
+.nl{width:100%;height:auto;color:var(--ink);touch-action:none;margin:6px 0}
+@keyframes happy{0%{transform:scale(.94)}60%{transform:scale(1.04)}100%{transform:scale(1)}}
+@keyframes nudge{0%,100%{transform:none}25%{transform:translateX(-6px)}60%{transform:translateX(5px)}}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-4px)}}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 @media (max-width:560px){
   #app{padding:14px 16px 64px}
@@ -275,7 +299,7 @@ const CONFIG = {
   DEFAULT_RATE: 100,             // points per $1 (Mom can change this in Rewards)
   STORAGE_KEY: 'g5tutor.v1',
   SHOW_MONEY: false,             // learner screens: show dollars earned + goal progress (parked for now; points still show)
-  VERSION: 'v7 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
+  VERSION: 'v8 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -840,6 +864,12 @@ Types:
 - "numeric": "answer" is a whole number, decimal, fraction like "3/4", or mixed number like "2 1/3". No units in the answer; put units in the prompt ("How many cm?"). Fractions in lowest terms unless the question asks for another form. ALWAYS include "expr": a plain arithmetic expression using only numbers, + - * / and parentheses that computes the answer (e.g. "(3/4)*8", "125-48", "2+1/3"). The app recomputes it to check your answer key.
 - "short": a one- or two-word answer; list other correct forms in "accept". Use rarely.
 - "order": put 3–5 things in order (timeline, steps, smallest to largest). "answer" is the array of items in the correct order.
+Interactive activities (made of fixed on-screen pieces; you only fill in the small parameters; they need no "answer" or "choices"). Use 2–4 of them among the PRACTICE questions where they truly fit the topic, never in "check". Kids love doing, not just tapping:
+- "match": "pairs": [{ "a": string, "b": string }] with 3–5 pairs; every "b" different. (term ↔ meaning, word ↔ picture, fraction ↔ decimal, cause ↔ effect, person ↔ role, organ ↔ job.)
+- "sort": "buckets": [2–3 short names], "items": [{ "text": string, "bucket": index into buckets }] with 4–8 items; every bucket gets at least one. (living / non-living, solid / liquid / gas, fact / opinion, noun / verb, levels of government, odd / even.)
+- "fraction" (fractions only): "n" and "d" (d from 2 to 12), optional "shape": "pizza" or "bar". She shades n of d equal parts. Prompt like "Shade 3/8 of the pizza."
+- "numberline": "min", "max", "step" (tick spacing; 2–20 ticks), "target" (a number or a fraction string like "3/4"), optional "tolerance", optional "labels" (one string per tick, e.g. ["0","1/4","1/2","3/4","1"]). The prompt names the value to place.
+Give each of these the usual "tier", "prompt", "explanationWrong", "explainRef" and "exp".
 Every question has "explanationWrong" (one kind line explaining why the right answer is right) and "explainRef" (0-based index of the explain card it relates to). Optional "visual": a short emoji picture (max 40 characters) when it helps.
 The answer must never appear in the prompt. Prompts: max ~30 words.
 Work every answer out carefully before writing it. A wrong answer key marks a child wrong when she is right, so accuracy matters more than anything else.
@@ -863,7 +893,7 @@ JSON SHAPE
     "passage": null OR { "title": string, "text": string }  (literacy reading lessons; otherwise null),
     "explain": [ { "text": string, "visual": string (optional emoji picture), "term": string (optional) } ],
     "examples": [ { "title": string, "problem": string, "visual": string (optional), "steps": [string], "answer": string } ],
-    "practice": [ { "type": "mcq|numeric|short|order", "tier": 1|2|3, "prompt": string, "choices": [string], "answer": string or [string], "accept": [string], "expr": string, "explanationWrong": string, "explainRef": number, "exp": string (code), "visual": string } ],
+    "practice": [ { "type": "mcq|numeric|short|order|match|sort|fraction|numberline", "tier": 1|2|3, "prompt": string, "choices": [string], "answer": string or [string], "accept": [string], "expr": string, "explanationWrong": string, "explainRef": number, "exp": string (code), "visual": string } ],
     "offscreen": [ { "title": string, "instructions": string, "problems": [string], "answers": [string], "minutes": number } ],
     "check": [ same shape as practice, type mcq or numeric only ],
     "reward": { "pointsBase": 100 }
@@ -939,7 +969,7 @@ function evalExpr(src) {
 }
 function normQ(q, id, dropped, checkOnly) {
   if (!q || typeof q !== 'object') return null;
-  const type = ['mcq', 'numeric', 'short', 'order'].includes(q.type) ? q.type : null;
+  const type = ['mcq', 'numeric', 'short', 'order', 'match', 'sort', 'fraction', 'numberline'].includes(q.type) ? q.type : null;
   const out = { id, exp: str(q.exp), type, tier: clamp(Math.round(+q.tier || 2), 1, 3), prompt: str(q.prompt), visual: str(q.visual), explanationWrong: str(q.explanationWrong), explainRef: Number.isInteger(q.explainRef) ? q.explainRef : 0, accept: arr(q.accept).map(str).filter(Boolean) };
   const drop = why => { dropped.push({ id, prompt: out.prompt, why }); return null; };
   if (!type || !out.prompt) return drop('malformed');
@@ -961,10 +991,30 @@ function normQ(q, id, dropped, checkOnly) {
     out.answer = ans; out.expr = str(q.expr);
   } else if (type === 'short') {
     out.answer = str(Array.isArray(q.answer) ? q.answer[0] : q.answer); if (!out.answer) return drop('no answer');
-  } else {
+  } else if (type === 'order') {
     const items = arr(q.answer).map(str).filter(Boolean);
     if (items.length < 2 || new Set(items).size !== items.length) return drop('bad order');
     out.answer = items;
+  } else if (type === 'match') {
+    const pr = arr(q.pairs).map(x => ({ a: str(x && x.a), b: str(x && x.b) })).filter(x => x.a && x.b).slice(0, 5);
+    if (pr.length < 3 || new Set(pr.map(x => x.a)).size !== pr.length || new Set(pr.map(x => x.b)).size !== pr.length) return drop('bad pairs');
+    out.pairs = pr; out.answer = pr.map(x => x.a + ' → ' + x.b);
+  } else if (type === 'sort') {
+    const bk = arr(q.buckets).map(str).filter(Boolean).slice(0, 3);
+    const items = arr(q.items).map(x => { let b = x && x.bucket; if (typeof b === 'string' && !/^\d+$/.test(b)) b = bk.indexOf(b); return { text: str(x && x.text), b: Number(b) }; }).filter(x => x.text && Number.isInteger(x.b) && x.b >= 0 && x.b < bk.length).slice(0, 8);
+    if (bk.length < 2 || items.length < 4 || new Set(items.map(x => x.b)).size !== bk.length || new Set(items.map(x => x.text)).size !== items.length) return drop('bad sort');
+    out.buckets = bk; out.items = items; out.answer = bk.map((b, i) => b + ': ' + items.filter(x => x.b === i).map(x => x.text).join(', ')).join(' | ');
+  } else if (type === 'fraction') {
+    const n = Math.round(+q.n), d = Math.round(+q.d);
+    if (!(d >= 2 && d <= 12 && n >= 1 && n <= d)) return drop('bad fraction');
+    out.n = n; out.d = d; out.shape = q.shape === 'bar' ? 'bar' : 'pizza'; out.answer = n + '/' + d;
+  } else {
+    const mn = +q.min, mx = +q.max, st = +q.step, t = parseNumber(q.target != null ? q.target : q.answer);
+    const ticks = Math.round((mx - mn) / st);
+    if (!(mx > mn && st > 0 && ticks >= 2 && ticks <= 20) || !t || t.v < mn - 1e-9 || t.v > mx + 1e-9) return drop('bad numberline');
+    out.min = mn; out.max = mx; out.step = st; out.target = t.v; out.tol = +q.tolerance > 0 ? +q.tolerance : st / 2;
+    const lab = arr(q.labels).map(str); out.labels = lab.length === ticks + 1 ? lab : null;
+    out.answer = str(q.target != null ? q.target : q.answer);
   }
   if (!out.explanationWrong) out.explanationWrong = 'Look at it one more time. You’ve got this!';
   return out;
@@ -1166,7 +1216,7 @@ VIEWS.edit = ({ id }) => {
   const qRow = (q, sec, i) => `<div class="qedit"><div class="row"><b>${sec === 'practice' ? 'Practice' : 'Check'} ${i + 1}</b><span class="muted"><small>${q.type}${q.type === 'mcq' ? ' · choices: ' + esc(q.choices.join(' | ')) : ''}</small></span>
     <button class="ghost danger" style="flex:0" data-a="edDel" data-v="${sec}.${i}">Remove</button></div>
     <textarea data-bind="ED:${sec}.${i}.prompt">${esc(q.prompt)}</textarea>
-    ${q.type === 'order' ? `<label>Correct order (one per line)</label><textarea data-bind="ED:${sec}.${i}._order">${esc(q.answer.join('\n'))}</textarea>` : `<label>Answer</label><input data-bind="ED:${sec}.${i}.answer" value="${esc(q.answer)}">`}</div>`;
+    ${['match', 'sort', 'fraction', 'numberline'].includes(q.type) ? `<p class="muted"><small>Hands-on activity: you can edit the question text; the activity itself stays as is.</small></p>` : q.type === 'order' ? `<label>Correct order (one per line)</label><textarea data-bind="ED:${sec}.${i}._order">${esc(q.answer.join('\n'))}</textarea>` : `<label>Answer</label><input data-bind="ED:${sec}.${i}.answer" value="${esc(q.answer)}">`}</div>`;
   return `
 <div class="topbar"><button data-a="openSummary" data-v="${id}">← Cancel</button><span class="who">Edit lesson</span><button data-a="edSave">Save</button></div>
 <div class="card"><label>Title</label><input data-bind="ED:meta.title" value="${esc(E.meta.title)}">
@@ -1211,7 +1261,7 @@ VIEWS.kidHome = () => {
   const part = L && L.meta.sequenceTotal > 1 ? ` · Part ${L.meta.sequencePosition} of ${L.meta.sequenceTotal}` : '';
   const hr = new Date().getHours(), hi = hr < 12 ? 'Good morning' : hr < 17 ? 'Hi' : 'Good evening';
   return `
-<div class="hello"><h1>${hi}, ${esc(kidName())}!</h1><button data-a="switchUser">Switch</button></div>
+<div class="hello"><h1>${hi}, ${esc(kidName())}!</h1><span class="row" style="flex:0 0 auto;gap:8px"><button data-a="toggleSound" aria-label="Sound">${S.settings.sound === false ? '🔇' : '🔊'}</button><button data-a="switchUser">Switch</button></span></div>
 <div class="pills"><span class="pill">${ICON.flame}${S.streak.count}<small>day streak</small></span><span class="pill">${ICON.star}${S.points.balance}<small>points</small></span></div>
 ${CONFIG.SHOW_MONEY ? goalCard() : ''}
 ${L ? `<div class="hero s-${esc(L.meta.subject)}"><span class="mark">${SUBJECTS[L.meta.subject]?.emoji || '⭐'}</span>
@@ -1421,10 +1471,108 @@ A.pencilScore = v => {
   advance();
 };
 A.revealStep = () => { S.attempt.sub.shown = (S.attempt.sub.shown || 0) + 1; save(); render(); };
+/* ---------- sound (tiny synthesized beeps; can be muted) ---------- */
+let AC = null;
+function sfx(kind) {
+  if (S.settings.sound === false) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const seq = { ok: [[660, .09], [880, .13]], no: [[330, .12], [262, .16]], up: [[523, .09], [659, .09], [784, .18]], win: [[523, .1], [659, .1], [784, .1], [1047, .35]], tap: [[520, .04]] }[kind]; let t = AC.currentTime;
+    seq.forEach(([f, d]) => { const o = AC.createOscillator(), g = AC.createGain(); o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.14, t + .01); g.gain.exponentialRampToValueAtTime(.0001, t + d); o.connect(g); g.connect(AC.destination); o.start(t); o.stop(t + d + .02); t += d * .9; });
+  } catch (e) {}
+}
+A.toggleSound = () => { S.settings.sound = S.settings.sound === false; save(); if (S.settings.sound) sfx('ok'); render(); };
+/* ---------- Pip, the friendly guide ---------- */
+function pip(mood, size) {
+  const mouth = { happy: '<path d="M25 41q7 8 14 0" fill="none" stroke="#2B2250" stroke-width="3" stroke-linecap="round"/>', cheer: '<path d="M23 39q9 14 18 0z" fill="#fff" stroke="#2B2250" stroke-width="2.6" stroke-linejoin="round"/>', think: '<path d="M28 43q4-2.5 8 0" fill="none" stroke="#2B2250" stroke-width="3" stroke-linecap="round"/>' }[mood] || '';
+  const brows = mood === 'think' ? '<path d="M18 22l9-3M46 22l-9-3" stroke="#2B2250" stroke-width="2.6" stroke-linecap="round"/>' : '';
+  const spark = mood === 'cheer' ? '<path d="M54 8l1.8 4.2 4.2 1.8-4.2 1.8L54 20l-1.8-4.2L48 14l4.2-1.8z" fill="#FFD84D"/><path d="M8 14l1.3 3 3 1.3-3 1.3L8 22.6 6.7 19.6l-3-1.3 3-1.3z" fill="#FF9F0A"/>' : '';
+  return `<svg class="pip ${mood}" width="${size || 60}" height="${size || 60}" viewBox="0 0 64 64"><defs><linearGradient id="pg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8B6CFF"/><stop offset="1" stop-color="#5B5BF0"/></linearGradient></defs>
+  <path d="M32 6v7" stroke="#5B5BF0" stroke-width="3" stroke-linecap="round"/><circle cx="32" cy="6" r="3.6" fill="#FF9F0A"/>
+  <ellipse cx="32" cy="37" rx="25" ry="23" fill="url(#pg)"/><ellipse cx="22" cy="24" rx="9" ry="5" fill="#fff" opacity=".22" transform="rotate(-25 22 24)"/>
+  <circle cx="23" cy="32" r="4.6" fill="#fff"/><circle cx="41" cy="32" r="4.6" fill="#fff"/><circle cx="24" cy="33" r="2.6" fill="#2B2250"/><circle cx="42" cy="33" r="2.6" fill="#2B2250"/>
+  <circle cx="15" cy="42" r="4" fill="#FF8FB1" opacity=".7"/><circle cx="49" cy="42" r="4" fill="#FF8FB1" opacity=".7"/>${brows}${mouth}${spark}</svg>`;
+}
+/* ---------- hands-on activities (no Claude calls; Claude only supplied the small parameters) ---------- */
+const MCOL = ['#5B5BF0', '#FF9F0A', '#1FA463', '#EC4899', '#0FB5A0'];
+function widgetInit(q) {
+  if (q.type === 'match') { const idx = q.pairs.map((_, i) => i); let o = shuffle(idx); if (o.join() === idx.join()) o.reverse(); INPUT.m = { sel: null, done: {}, mistakes: 0, order: o }; }
+  if (q.type === 'sort') INPUT.s = { sel: null, placed: {}, mistakes: 0, order: shuffle(q.items.map((_, i) => i)) };
+  if (q.type === 'fraction') INPUT.f = { on: [] };
+  if (q.type === 'numberline') INPUT.nl = { v: null };
+}
+function finishWidget(q, given) {
+  render();
+  setTimeout(() => { const a = S.attempt; if (a && !a.sub.fb && curQ() && curQ().id === q.id) submitAnswer(given); }, 520);
+}
+function matchBody(q) {
+  const m = INPUT.m, ownerOf = j => Object.keys(m.done).find(i => m.done[i] === j);
+  return `<p class="muted" style="margin-top:-6px">Tap one on the left, then its partner on the right.</p><div class="mt-grid">
+  <div>${q.pairs.map((p, i) => `<button class="mt ${m.done[i] != null ? 'done' : ''} ${m.sel === i ? 'sel' : ''}" ${m.done[i] != null ? `style="--c:${MCOL[i % 5]}" disabled` : ''} data-a="mLeft" data-v="${i}">${esc(p.a)}</button>`).join('')}</div>
+  <div>${m.order.map(j => { const o = ownerOf(j); return `<button class="mt ${o != null ? 'done' : ''}" ${o != null ? `style="--c:${MCOL[o % 5]}" disabled` : ''} data-a="mRight" data-v="${j}">${esc(q.pairs[j].b)}</button>`; }).join('')}</div></div>`;
+}
+A.mLeft = v => { INPUT.m.sel = +v; sfx('tap'); render(); };
+A.mRight = v => {
+  const m = INPUT.m, q = curQ(), j = +v; if (!m || m.sel == null) { toast('Tap one on the left first.'); return; }
+  if (m.sel === j) { m.done[j] = j; m.sel = null; sfx('ok'); if (Object.keys(m.done).length === q.pairs.length) finishWidget(q, { mistakes: m.mistakes }); else render(); }
+  else { m.mistakes++; m.sel = null; sfx('no'); toast('Not those two. Try another!'); render(); }
+};
+function sortBody(q) {
+  const s = INPUT.s, tray = s.order.filter(i => s.placed[i] == null);
+  return `<p class="muted" style="margin-top:-6px">Tap a card, then tap where it belongs.</p>
+  <div class="tray">${tray.map(i => `<button class="sc ${s.sel === i ? 'sel' : ''}" data-a="sItem" data-v="${i}">${esc(q.items[i].text)}</button>`).join('') || '<span class="muted">All sorted!</span>'}</div>
+  <div class="buckets n${q.buckets.length}">${q.buckets.map((b, bi) => `<button class="bk" style="--c:${MCOL[bi % 5]}" data-a="sBucket" data-v="${bi}"><b>${esc(b)}</b><span>${q.items.map((it, i) => s.placed[i] === bi ? `<i class="sc in">${esc(it.text)}</i>` : '').join('')}</span></button>`).join('')}</div>`;
+}
+A.sItem = v => { INPUT.s.sel = +v; sfx('tap'); render(); };
+A.sBucket = v => {
+  const s = INPUT.s, q = curQ(), b = +v; if (s.sel == null) { toast('Tap a card first.'); return; }
+  if (q.items[s.sel].b === b) { s.placed[s.sel] = b; s.sel = null; sfx('ok'); if (Object.keys(s.placed).length === q.items.length) finishWidget(q, { mistakes: s.mistakes }); else render(); }
+  else { s.mistakes++; s.sel = null; sfx('no'); toast('Not that one. Try another spot!'); render(); }
+};
+function fractionBody(q) {
+  const on = INPUT.f.on, d = q.d; let shapes = '';
+  if (q.shape === 'bar') {
+    const w = 520 / d; shapes = `<svg viewBox="0 0 560 120" class="frac"><rect x="18" y="18" width="524" height="84" rx="18" fill="#FFE2A8"/>` +
+      Array.from({ length: d }, (_, i) => `<rect data-a="fTog" data-v="${i}" x="${20 + i * w}" y="20" width="${w}" height="80" class="wedge ${on.includes(i) ? 'on' : ''}" rx="${i === 0 || i === d - 1 ? 14 : 0}"/>`).join('') + '</svg>';
+  } else {
+    const cx = 110, cy = 110, r = 96, pt = a => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+    shapes = `<svg viewBox="0 0 220 220" class="frac pizza"><circle cx="110" cy="110" r="106" fill="#E6A34A"/>` +
+      Array.from({ length: d }, (_, i) => { const a0 = -Math.PI / 2 + i * 2 * Math.PI / d, a1 = a0 + 2 * Math.PI / d, [x0, y0] = pt(a0), [x1, y1] = pt(a1);
+        const mid = (a0 + a1) / 2, dots = on.includes(i) ? `<circle cx="${cx + r * .62 * Math.cos(mid)}" cy="${cy + r * .62 * Math.sin(mid)}" r="${Math.max(5, 22 - d)}" fill="#D6362E"/>` : '';
+        return `<g data-a="fTog" data-v="${i}"><path d="M${cx} ${cy}L${x0} ${y0}A${r} ${r} 0 ${a1 - a0 > Math.PI ? 1 : 0} 1 ${x1} ${y1}Z" class="wedge ${on.includes(i) ? 'on' : ''}"/>${dots}</g>`; }).join('') + '</svg>';
+  }
+  return `<div class="fracwrap">${shapes}</div><p class="muted" style="text-align:center">Shaded: <b>${on.length}</b> of ${d}</p><button class="big primary" data-a="fCheck" ${on.length ? '' : 'disabled'}>Check ✓</button>`;
+}
+A.fTog = v => { const on = INPUT.f.on, i = +v, k = on.indexOf(i); if (k >= 0) on.splice(k, 1); else on.push(i); sfx('tap'); render(); };
+A.fCheck = () => submitAnswer({ count: INPUT.f.on.length });
+const nlX = (q, v) => 30 + (v - q.min) / (q.max - q.min) * 540;
+function nlBody(q) {
+  const n = Math.round((q.max - q.min) / q.step), fmt = v => String(Math.round(v * 1000) / 1000), v = INPUT.nl.v;
+  const ticks = Array.from({ length: n + 1 }, (_, i) => { const x = 30 + i * 540 / n, val = q.min + i * q.step; return `<line x1="${x}" y1="58" x2="${x}" y2="82" stroke="currentColor" stroke-width="3" opacity=".5"/><text x="${x}" y="108" text-anchor="middle" font-size="${n > 10 ? 15 : 20}" font-weight="700" fill="currentColor">${esc(q.labels ? q.labels[i] : fmt(val))}</text>`; }).join('');
+  return `<svg id="nlSvg" viewBox="0 0 600 130" class="nl"><line x1="30" y1="70" x2="570" y2="70" stroke="currentColor" stroke-width="5" stroke-linecap="round" opacity=".55"/>${ticks}
+  <g id="nlMark" style="${v == null ? 'display:none' : ''}" transform="translate(${v == null ? 0 : nlX(q, v)} 0)"><path d="M0 70L-13 36a15 15 0 1 1 26 0z" fill="#5B5BF0"/><circle cx="0" cy="28" r="5.5" fill="#fff"/></g>
+  <rect id="nlHit" x="0" y="0" width="600" height="130" fill="transparent" data-a="nlTap"/></svg>
+  <p class="muted" style="text-align:center;margin:0 0 6px">Tap or slide along the line to place it.</p><button class="big primary" id="nlCheck" data-a="nlCheck" ${v == null ? 'disabled' : ''}>Check ✓</button>`;
+}
+function nlSet(clientX) {
+  const q = curQ(), svg = $('#nlSvg'); if (!q || q.type !== 'numberline' || !svg || S.attempt.sub.fb) return;
+  const r = svg.getBoundingClientRect(), x = (clientX - r.left) / r.width * 600, fr = clamp((x - 30) / 540, 0, 1), snap = q.step / 4;
+  const v = clamp(q.min + Math.round(fr * (q.max - q.min) / snap) * snap, q.min, q.max); INPUT.nl.v = v;
+  const g = $('#nlMark'); g.style.display = ''; g.setAttribute('transform', `translate(${nlX(q, v)} 0)`); $('#nlCheck').disabled = false;
+}
+A.nlTap = (v, el, e) => { sfx('tap'); nlSet(e.clientX); };
+A.nlCheck = () => { if (INPUT.nl.v != null) submitAnswer({ v: INPUT.nl.v }); };
+let nlDrag = false;
+document.addEventListener('pointerdown', e => { if (e.target.closest && e.target.closest('#nlSvg')) { nlDrag = true; nlSet(e.clientX); } });
+document.addEventListener('pointermove', e => { if (nlDrag) nlSet(e.clientX); });
+document.addEventListener('pointerup', () => { nlDrag = false; });
 function questionCard(q, label, isPractice) {
+  { const a0 = S.attempt, k = a0.si + ':' + q.id + ':' + (a0.sub.done || 0); if (INPUT.k !== k) { INPUT = { text: '', order: [], k }; widgetInit(q); } }
   const a = S.attempt, fb = a.sub.fb;
   let body = '';
-  if (q.type === 'mcq') {
+  if (WIDGETS.includes(q.type)) {
+    body = fb ? '' : q.type === 'match' ? matchBody(q) : q.type === 'sort' ? sortBody(q) : q.type === 'fraction' ? fractionBody(q) : nlBody(q);
+  } else if (q.type === 'mcq') {
     body = `<div class="choices">${q.choices.map((c, i) => `<button class="choice ${fb ? (c === q.answer ? 'right' : c === fb.given ? 'wrong' : '') : ''}" ${fb ? 'disabled' : ''} data-a="answerMcq" data-v="${i}"><i>${'ABCDEF'[i] || ''}</i><span>${esc(c)}</span></button>`).join('')}</div>`;
   } else if (q.type === 'numeric') {
     body = fb ? `<div class="typed ${fb.correct ? 'right' : 'wrong'}">${esc(fb.given)}</div>`
@@ -1457,11 +1605,18 @@ function questionCard(q, label, isPractice) {
   ${fb ? feedbackView(q, fb) : `<button class="flag" data-a="flagQ">🚩 This question looks wrong</button>`}</div>`;
 }
 const CHEERS = ['Yes! 🎉', 'Nailed it! ⭐', 'You got it! 🙌', 'Awesome! 🚀', 'Correct! 💪', 'Great thinking! 🧠'];
-const answerText = q => q.type === 'order' ? q.answer.join(' → ') : q.answer;
+const answerText = q => q.type === 'order' ? q.answer.join(' → ') : q.type === 'match' ? q.answer.join(', ') : q.answer;
+const WIDGETS = ['match', 'sort', 'fraction', 'numberline'];
+function givenText(q, g) {
+  if (q.type === 'match' || q.type === 'sort') return g.mistakes ? g.mistakes + ' mix-up' + (g.mistakes > 1 ? 's' : '') : 'no mix-ups';
+  if (q.type === 'fraction') return g.count + ' of ' + q.d + ' shaded';
+  if (q.type === 'numberline') return String(Math.round(g.v * 1000) / 1000);
+  return Array.isArray(g) ? g.join(' → ') : g;
+}
 function feedbackView(q, fb) {
-  if (fb.correct) return `<div class="fb good"><div class="fb-h">${fb.cheer} <span style="float:right">+${CONFIG.POINTS.perCorrect}</span></div>
-    ${fb.levelUp ? '<p>Level up! Trickier ones coming. ⬆️</p>' : ''}<button class="big primary" data-a="next">Next →</button></div>`;
-  return `<div class="fb soft"><div class="fb-h">Not quite — here’s why…</div>
+  if (fb.correct) return `<div class="fb good"><div class="fbtop">${pip('cheer')}<div class="fb-h">${fb.cheer} <span class="plus">+${CONFIG.POINTS.perCorrect}</span></div></div>
+    ${fb.combo >= 3 ? `<p class="combo">🔥 ${fb.combo} in a row!</p>` : ''}${fb.levelUp ? '<p>Level up! Trickier ones coming. ⬆️</p>' : ''}<button class="big primary" data-a="next">Next →</button></div>`;
+  return `<div class="fb soft"><div class="fbtop">${pip('think')}<div class="fb-h">Not quite — here’s why…</div></div>
     <p>${esc(q.explanationWrong)}</p><p>Answer: <b>${esc(answerText(q))}</b></p>
     ${q.type === 'short' ? `<button class="link" data-a="meantThat">My answer means the same thing</button>` : ''}
     <div class="cause"><div class="alt-h">What happened? (optional)</div>
@@ -1499,6 +1654,10 @@ function numericMatch(given, q) {
   });
 }
 function judge(q, given) {
+  if (q.type === 'match') return given.mistakes <= (q.pairs.length >= 5 ? 1 : 0);
+  if (q.type === 'sort') return given.mistakes <= (q.items.length >= 6 ? 1 : 0);
+  if (q.type === 'fraction') return given.count === q.n;
+  if (q.type === 'numberline') return Math.abs(given.v - q.target) <= q.tol + 1e-9;
   if (q.type === 'mcq') return given === q.answer;
   if (q.type === 'numeric') return numericMatch(given, q);
   if (q.type === 'order') return Array.isArray(given) && given.length === q.answer.length && given.every((x, i) => x === q.answer[i]);
@@ -1509,9 +1668,10 @@ function submitAnswer(given) {
   const a = S.attempt, st = a.steps[a.si], q = curQ();
   if (!q || a.sub.fb) return;
   const correct = judge(q, given), sec = secOf(st);
-  const rec = { si: a.si, sec, qid: q.id, exp: q.exp || '', helped: sec !== 'warm' && !!(a.helped || {})[q.explainRef || 0], correct, given: Array.isArray(given) ? given.join(' → ') : given, tier: q.tier, prompt: q.prompt, answer: answerText(q) };
+  const rec = { si: a.si, sec, qid: q.id, exp: q.exp || '', type: q.type, helped: sec !== 'warm' && !!(a.helped || {})[q.explainRef || 0], correct, given: givenText(q, given), tier: q.tier, prompt: q.prompt, answer: answerText(q) };
   a.answers.push(rec);
-  const fb = { correct, given, cheer: pick(CHEERS) };
+  const fb = { correct, given: WIDGETS.includes(q.type) ? '' : given, cheer: pick(CHEERS) };
+  a.combo = correct ? (a.combo || 0) + 1 : 0; fb.combo = a.combo;
   if (correct) a.pts += CONFIG.POINTS.perCorrect;
   if (st.k === 'practice') {
     if (correct) { a.run = a.run > 0 ? a.run + 1 : 1; if (a.run >= 2) { if (a.tier < 3) { a.tier++; fb.levelUp = true; } a.run = 0; a.maxTier = Math.max(a.maxTier, a.tier); } }
@@ -1519,7 +1679,7 @@ function submitAnswer(given) {
   }
   if (st.k === 'warm') { const r = S.review.find(x => x.id === st.id); if (r) reviewUpdate(r, correct); }
   else if (!correct) addToReview(a.lessonId, q);
-  a.sub.fb = fb; touch(); save(); render();
+  a.sub.fb = fb; touch(); save(); sfx(correct ? (fb.levelUp ? 'up' : 'ok') : 'no'); render();
 }
 A.meantThat = () => {
   const a = S.attempt, st = a.steps[a.si], rec = a.answers[a.answers.length - 1], q = curQ();
@@ -1664,6 +1824,7 @@ function finishAttempt() {
     points: total, breakdown: bd, accepted: false,
   };
   S.results.unshift(r); if (S.results.length > 600) S.results.pop();
+  sfx('win');
   L.status = 'done';
   const nx = nextInSequence(L);
   S.todayLessonId = nx && nx.lesson ? nx.lesson.id : null;
