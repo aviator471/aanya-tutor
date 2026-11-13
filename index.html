@@ -101,7 +101,7 @@ label{display:block;font-weight:600;margin:16px 0 6px}
 .big.ghost{background:var(--primary-soft);box-shadow:none}
 .link{color:var(--primary);padding:10px 4px;font-size:16px;font-weight:600}
 .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-.row>*{flex:1 1 auto}
+.row>*{flex:1 1 auto}.row>.chip,.row>.emo{flex:0 0 auto}.row>h2{text-align:left}
 .chip{display:inline-block;background:var(--fill);color:var(--muted);font-size:13px;font-weight:700;border-radius:999px;padding:5px 12px;letter-spacing:.01em}
 .chip.p{background:var(--primary-soft);color:var(--primary)}
 .chip.g{background:var(--good-soft);color:var(--good)}
@@ -133,7 +133,20 @@ label{display:block;font-weight:600;margin:16px 0 6px}
 .item .t{font-weight:650}
 .item .s{font-size:15px;color:var(--muted)}
 .item button.sm{background:var(--primary-soft);color:var(--primary);border-radius:999px;padding:9px 16px;font-weight:700;font-size:15px;white-space:nowrap}
-.rings{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center}.rg b{display:block;font-size:14px;font-family:var(--rounded)}.rg small{color:var(--muted);font-size:12px}.ring{width:100%;max-width:84px}.nudge{border:2px solid var(--primary-soft)}.nudge .eyebrow{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--primary)}.lh{margin:18px 4px 6px;font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.tabs{display:flex;gap:4px;background:var(--fill);border-radius:999px;padding:4px;margin:14px 0}
+.rings{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center}.rg b{display:block;font-size:14px;font-family:var(--rounded)}.rg small{color:var(--muted);font-size:12px}.ring{width:100%;max-width:84px}.nudge{border:2px solid var(--primary-soft)}.nudge .eyebrow{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--primary)}.tabbar{position:fixed;left:0;right:0;bottom:0;display:flex;justify-content:center;background:color-mix(in srgb,var(--card) 82%,transparent);-webkit-backdrop-filter:saturate(180%) blur(20px);backdrop-filter:saturate(180%) blur(20px);border-top:1px solid var(--line);padding:8px 8px calc(8px + env(safe-area-inset-bottom));z-index:30;animation:none!important}
+.tabbar button{flex:1;max-width:170px;display:flex;flex-direction:column;align-items:center;gap:3px;font-size:12px;font-weight:700;color:var(--muted);padding:6px 4px;border-radius:14px}.tabbar button svg{width:26px;height:26px}.tabbar button.on{color:var(--primary)}
+#app.has-tabs{padding-bottom:120px}
+.hello .topbtn{background:var(--card);border-radius:999px;padding:10px 18px;font-size:16px;font-weight:650;box-shadow:var(--shadow)}
+.strip{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--card);border-radius:20px;padding:14px 18px;margin:10px 0;box-shadow:var(--shadow);cursor:pointer;font-weight:600}.strip b{color:var(--primary)}
+.hero .meta{font-size:14px;font-weight:700;opacity:.95}
+.tiles{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:6px 0 14px}.tile{display:flex;align-items:center;gap:14px;background:var(--card);border-radius:28px;padding:18px;text-align:left;box-shadow:var(--shadow)}.tile .ring{width:62px;flex:0 0 62px}.tile b{display:block;font-family:var(--rounded);font-size:18px}.tile span{display:block;font-weight:700;font-size:15px}.tile span.low{color:var(--danger)}.tile small{color:var(--muted);font-size:13px}
+.chip.bad{background:#FDE8E6;color:var(--danger)}
+.bignum{font-family:var(--rounded);font-size:54px;font-weight:800;line-height:1.1;margin:10px 0 6px}.bignum small{display:block;font-size:15px;font-weight:700;color:var(--muted)}
+.cov{height:10px;border-radius:99px;background:var(--fill);overflow:hidden}.cov i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--s1),var(--s2))}
+.num{display:grid;place-items:center;width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:var(--primary-soft);color:var(--primary);font-weight:800}.num.ok{background:var(--good-soft);color:var(--good)}
+.plan{border:2px solid var(--primary-soft)}
+@media print{.tabbar,.noprint,.topbar button{display:none!important}body{background:#fff}#app{padding:0}.card{box-shadow:none;border:1px solid #ddd;break-inside:avoid}}
+.lh{margin:18px 4px 6px;font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}.tabs{display:flex;gap:4px;background:var(--fill);border-radius:999px;padding:4px;margin:14px 0}
 .tabs button{flex:1;padding:11px 6px;border-radius:999px;font-weight:650;font-size:16px;color:var(--muted)}
 .tabs button.on{background:var(--card);color:var(--ink);box-shadow:0 2px 8px rgba(0,0,0,.1)}
 .subjects{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
@@ -232,7 +245,7 @@ label{display:block;font-weight:600;margin:16px 0 6px}
 .breakdown li{display:flex;justify-content:space-between;padding:10px 4px;border-bottom:1px solid var(--line);font-size:18px}
 .confetti{position:fixed;top:-20px;width:10px;height:14px;border-radius:3px;animation:fall linear forwards;pointer-events:none;z-index:5}
 .spin{display:inline-block;animation:wiggle 1.2s ease-in-out infinite}
-#toast{position:fixed;left:50%;bottom:30px;transform:translateX(-50%) translateY(140px);background:rgba(29,29,31,.92);color:#fff;border-radius:999px;padding:14px 24px;font-size:17px;max-width:90vw;transition:transform .35s cubic-bezier(.2,.8,.2,1);z-index:10;text-align:center;backdrop-filter:blur(10px)}
+#toast{position:fixed;left:50%;bottom:100px;transform:translateX(-50%) translateY(140px);background:rgba(29,29,31,.92);color:#fff;border-radius:999px;padding:14px 24px;font-size:17px;max-width:90vw;transition:transform .35s cubic-bezier(.2,.8,.2,1);z-index:10;text-align:center;backdrop-filter:blur(10px)}
 #toast.show{transform:translateX(-50%) translateY(0)}
 .qedit{border-top:1px solid var(--line);padding:14px 0}
 .qedit textarea{min-height:70px}
@@ -299,7 +312,7 @@ const CONFIG = {
   DEFAULT_RATE: 100,             // points per $1 (Mom can change this in Rewards)
   STORAGE_KEY: 'g5tutor.v1',
   SHOW_MONEY: false,             // learner screens: show dollars earned + goal progress (parked for now; points still show)
-  VERSION: 'v13 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
+  VERSION: 'v14 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -504,7 +517,7 @@ const DEFAULT_STATE = () => ({
   version: 1,
   settings: { pin: null, apiKey: '', learnerName: '', rate: CONFIG.DEFAULT_RATE, welcomed: false, lastExport: 0, createdAt: Date.now() },
   lessons: {}, order: [], sequences: {},
-  todayLessonId: null, attempt: null, assignLog: [],
+  todayLessonId: null, attempt: null, assignLog: [], plan: null,
   results: [], review: [], flags: [], notebook: [],
   points: { balance: 0, earned: 0, log: [] },
   streak: { count: 0, last: null, best: 0 },
@@ -534,13 +547,15 @@ let view = { name: 'gate', p: {} };
 let role = null;           // 'mom' | 'kid' (not saved; reload returns to the gate)
 let TIMER = null;
 const VIEWS = {}, A = {};
-const MOM_VIEWS = ['curriculum', 'momHome', 'newLesson', 'generating', 'summary', 'edit', 'results', 'result', 'flags', 'rewards', 'settings', 'welcome'];
+const MOM_VIEWS = ['curriculum', 'momHome', 'lessons', 'report', 'newLesson', 'generating', 'summary', 'edit', 'results', 'result', 'flags', 'rewards', 'settings', 'welcome'];
 function go(name, p = {}) { view = { name, p }; render(); window.scrollTo(0, 0); }
 function render() {
   if (MOM_VIEWS.includes(view.name) && role !== 'mom') view = { name: 'gate', p: {} };
   clearInterval(TIMER); TIMER = null;
   document.querySelectorAll('.confetti').forEach(e => e.remove());
-  $('#app').innerHTML = VIEWS[view.name](view.p);
+  const tabs = role === 'mom' && TAB_VIEWS[view.name];
+  $('#app').innerHTML = VIEWS[view.name](view.p) + (tabs ? tabbar(tabs) : '');
+  $('#app').classList.toggle('has-tabs', !!tabs);
   if (VIEWS[view.name].after) VIEWS[view.name].after(view.p);
 }
 document.addEventListener('click', e => {
@@ -716,10 +731,9 @@ function lessonsBlock(writing) {
   let done = grp('done').sort((x, y) => ((info.get(x).res[0] || { at: 0 }).at - (info.get(y).res[0] || { at: 0 }).at));
   const sec = (title, arr, note) => arr.length ? `<h4 class="lh">${title} <span class="muted">${arr.length}</span></h4>${note ? `<p class="muted"><small>${note}</small></p>` : ''}<div class="card"><ul class="list">${arr.map(lessonRow).join('')}</ul></div>` : '';
   const doneShown = SHOW_OLD ? done : done.slice(0, 8);
-  return `<h3>Lessons</h3>
-<div class="tabs" style="overflow-x:auto">${tabs.map(t => { const n = waiting(t); return `<button class="${LTAB === t ? 'on' : ''}" data-a="lessonTab" data-v="${t}" style="white-space:nowrap">${t === 'all' ? 'All' : (SUBJECTS[t].emoji + ' ' + SUBJECTS[t].label)}${n ? ` <small style="color:var(--primary)">●${n}</small>` : ''}</button>`; }).join('')}</div>
+  return `<div class="tabs" style="overflow-x:auto">${tabs.map(t => { const n = waiting(t); return `<button class="${LTAB === t ? 'on' : ''}" data-a="lessonTab" data-v="${t}" style="white-space:nowrap">${t === 'all' ? 'All' : (SUBJECTS[t].emoji + ' ' + SUBJECTS[t].label)}${n ? ` <small style="color:var(--primary)">●${n}</small>` : ''}</button>`; }).join('')}</div>
 ${today ? `<h4 class="lh">Assigned now</h4><div class="card"><ul class="list">${lessonRow(today)}</ul></div>` : ''}
-${writing.length ? `<div class="card"><ul class="list">${writing.map(w => `<li class="item"><div class="grow"><div class="t">${esc(w.e.title)}</div><div class="s">Lesson ${w.k + 1} of ${w.seq.lessons.length} · ${w.e.status === 'error' ? 'will retry soon' : 'being written…'}</div></div></li>`).join('')}</ul></div>` : ''}
+${writing.length ? `<h4 class="lh">Planned, not written yet</h4><div class="card"><ul class="list">${writing.map(w => { const prevOk = w.k === 0 || w.seq.lessons[w.k - 1].lessonId; return `<li class="item"><div class="grow"><div class="t">${esc(w.e.title)}</div><div class="s">Lesson ${w.k + 1} of ${w.seq.lessons.length} · ~18 min · ${w.e.status === 'writing' ? 'being written…' : w.e.status === 'error' ? 'didn’t finish, tap to retry' : 'not written yet'}</div></div>${w.e.status === 'writing' ? '' : prevOk ? `<button class="sm" data-a="writeStep" data-v="${w.seq.id}:${w.k}">Write &amp; assign</button>` : '<span class="chip">After the one before</span>'}</li>`; }).join('')}</ul><p class="muted"><small>Writing a lesson uses a few cents. It only happens when you tap.</small></p></div>` : ''}
 ${sec('Ready to assign', ready)}
 ${sec('Redo? (under ' + REDO_BELOW + '%)', redo, 'Lowest score first.')}
 ${sec('Done', doneShown, 'Oldest first, so the ones she did longest ago come up first.')}
@@ -746,7 +760,7 @@ function nudge() {
   subs.forEach(k => st[k] = subjStats(k));
   const need = k => {
     const x = st[k], days = x.lastAt ? Math.min(14, (now - x.lastAt) / 864e5) : 14;
-    return (x.mastery == null ? 55 : Math.max(0, 90 - x.mastery)) + (1 - x.covered / x.total) * 25 + days * 1.5 + (f && f.subject === k ? 80 : 0);
+    return (x.mastery == null ? 25 : Math.max(0, 90 - x.mastery)) + (x.mastery != null && x.mastery < REDO_BELOW ? 30 : 0) + (1 - x.covered / x.total) * 15 + days * 1.5 + (f && f.subject === k ? 80 : 0);
   };
   const top = subs.slice().sort((a, b) => need(b) - need(a))[0], x = st[top], label = SUBJECTS[top].label;
   const lessons = S.order.map(id => S.lessons[id]).filter(L => L && L.meta.subject === top && L.id !== S.todayLessonId);
@@ -780,54 +794,195 @@ function kidJourney() {
   return `<h3>My journey</h3><div class="card"><div class="rings">${Object.keys(SUBJECTS).map(k => { const x = subjStats(k); return `<div class="rg s-${k}">${ringSvg(x.total ? Math.max(x.covered / x.total, x.covered ? 0.06 : 0) : 0, '', SUBJECTS[k].emoji)}<b>${SUBJECTS[k].label}</b><small>${x.covered ? x.covered + ' explored' : 'Coming up'}</small></div>`; }).join('')}</div></div>`;
 }
 FORMS.FOCUS = { text: '', subject: 'math' };
-function overviewBlock() {
-  if (!S.order.length && !S.results.length) return '';
-  const f = focusActive(), nd = nudge(), subs = Object.keys(SUBJECTS), F = FORMS.FOCUS;
-  const row = k => {
-    const x = subjStats(k), low = x.mastery != null && x.mastery < REDO_BELOW;
-    return `<li class="item" data-a="lessonTab" data-v="${k}" style="cursor:pointer"><span style="font-size:26px">${SUBJECTS[k].emoji}</span>
-    <div class="grow"><div class="t">${SUBJECTS[k].label}${f && f.subject === k ? ' <span class="chip p">Class focus</span>' : ''}${nd && nd.subject === k ? ' <span class="chip" style="background:#FFF1D6;color:#9A5B00">Suggested</span>' : ''}</div>
-    <div class="s">${x.covered} of ${x.total} Grade 5 topics covered${x.lastAt ? ' · last ' + fmtDate(x.lastAt) : ' · none yet'}</div></div>
-    <div style="text-align:right;min-width:62px"><b style="font-size:22px${low ? ';color:var(--danger)' : ''}">${x.mastery == null ? '—' : x.mastery + '%'}</b><div class="s">doing</div></div></li>`;
-  };
-  const assignBtn = nd && (nd.lesson ? `<button class="big primary" data-a="nudgeAssign" data-v="${nd.lesson.id}">${S.todayLessonId ? 'Assign instead' : 'Assign'}: ${esc(nd.lesson.meta.title)}</button>` : `<button class="big primary" data-a="nudgeMake">Make &amp; assign (a few cents)</button><p class="muted"><small>Writes a new ${esc(SUBJECTS[nd.subject].label)} lesson about: ${esc(String(nd.make.topic).slice(0, 90))}</small></p>`);
-  return `<h3>How she’s doing</h3>
-${nd ? `<div class="card nudge"><div class="eyebrow">${S.todayLessonId ? 'Up next (after today’s lesson)' : 'Suggested next lesson'} · ${SUBJECTS[nd.subject].emoji} ${esc(SUBJECTS[nd.subject].label)}</div><p>${esc(nd.why)}</p>${assignBtn}</div>` : ''}
-<div class="card"><ul class="list">${subs.map(row).join('')}</ul><p class="muted"><small>“Doing” leans on the last few weeks, so older scores matter less. “Covered” counts topics she has practised.</small></p></div>
-<details class="card"><summary><b>Class focus${f ? ': ' + esc(f.text) : ''}</b> <span class="muted">${f ? '(' + esc(SUBJECTS[f.subject].label) + ')' : '(optional)'}</span></summary>
+function focusBlock() {
+  const f = focusActive(), subs = Object.keys(SUBJECTS), F = FORMS.FOCUS;
+  return `<details class="card"><summary><b>Class focus${f ? ': ' + esc(f.text) : ''}</b> <span class="muted">${f ? '(' + esc(SUBJECTS[f.subject].label) + ')' : '(optional)'}</span></summary>
   <label>What is her class doing this month?</label><input data-bind="FOCUS:text" value="${esc(F.text || (f ? f.text : ''))}" placeholder="e.g. Adding and subtracting fractions">
-  <div class="tabs" style="overflow-x:auto">${subs.map(k => `<button class="${(F.subject) === k ? 'on' : ''}" data-a="focusSubj" data-v="${k}" style="white-space:nowrap">${SUBJECTS[k].emoji} ${SUBJECTS[k].label}</button>`).join('')}</div>
+  <div class="tabs" style="overflow-x:auto">${subs.map(k => `<button class="${F.subject === k ? 'on' : ''}" data-a="focusSubj" data-v="${k}" style="white-space:nowrap">${SUBJECTS[k].emoji} ${SUBJECTS[k].label}</button>`).join('')}</div>
   <div class="row"><button class="ghost" data-a="focusSave">Save focus</button>${f ? '<button class="ghost danger" data-a="focusClear">Clear</button>' : ''}</div>
-  <p class="muted"><small>Suggestions will favour this for a month, then go back to weak spots and gaps.</small></p></details>`;
+  <p class="muted"><small>Suggestions favour this for a month, then go back to weak spots and gaps.</small></p></details>`;
 }
 A.focusSubj = v => { FORMS.FOCUS.subject = v; render(); };
 A.focusSave = () => { const t = str(FORMS.FOCUS.text); if (!t) { toast('Type what the class is doing first.'); return; } S.settings.focus = { text: t.slice(0, 120), subject: FORMS.FOCUS.subject, at: Date.now() }; save(); toast('Saved. Suggestions will favour it.'); render(); };
 A.focusClear = () => { S.settings.focus = null; FORMS.FOCUS = { text: '', subject: 'math' }; save(); render(); };
 A.nudgeAssign = id => A.assignLesson(id);
 A.nudgeMake = () => {
-  const nd = nudge(); if (!nd || !nd.make) return;
+  const nd = planNext() || nudge(); if (!nd || !nd.make) return;
   if (!S.settings.apiKey) { toast('First add your Claude key in Settings.'); go('settings'); return; }
-  startGen({ subject: nd.subject, expCode: nd.make.expCode || '', mode: 'topic', topic: nd.make.topic, text: '', file: null, split: false, autoAssign: true });
+  startGen({ subject: nd.subject, expCode: nd.make.expCode || '', mode: 'topic', topic: nd.make.topic, text: '', file: null, split: false, short: true, autoAssign: true, planStepId: nd.make.planStepId });
 };
+/* ---------- Report: how she is doing, written by the app (no API) ---------- */
+const WIN_DAYS = 30;
+function repData(subj) {
+  const now = Date.now(), rs = S.results.filter(r => r.subject === subj);
+  const sc = rs.filter(r => r.masteryTotal > 0);
+  const inWin = sc.filter(r => now - r.at <= WIN_DAYS * 864e5), prior = sc.filter(r => { const d = now - r.at; return d > WIN_DAYS * 864e5 && d <= 2 * WIN_DAYS * 864e5; });
+  const avg = a => a.length ? Math.round(a.reduce((t, r) => t + r.mastery, 0) / a.length) : null;
+  const cur = avg(inWin), prev = avg(prior), st = subjStats(subj);
+  const em = {};
+  rs.forEach(r => { const w = Math.pow(0.5, (now - r.at) / 864e5 / HALF_LIFE_DAYS); Object.entries(r.byExp || {}).forEach(([c, [a, b]]) => { const e = em[c] = em[c] || { t: 0, rw: 0, tw: 0 }; e.t += b; e.rw += a * w; e.tw += b * w; }); });
+  const list = Object.entries(em).filter(([, e]) => e.t >= 2).map(([c, e]) => ({ code: c, pct: Math.round(100 * e.rw / e.tw), n: e.t, text: expText(subj, c) }));
+  const causes = { idea: 0, fact: 0, slip: 0 }; let help = 0, chk = 0;
+  inWin.forEach(r => { Object.entries(r.causes || {}).forEach(([k, v]) => { if (k in causes) causes[k] += v; }); help += r.helpedCount || 0; chk += r.checkTotal || 0; });
+  const totalCause = causes.idea + causes.fact + causes.slip, top = Object.entries(causes).sort((a, b) => b[1] - a[1])[0];
+  return {
+    subj, lessons: inWin.length, minutes: inWin.reduce((t, r) => t + (r.minutes || 0), 0), cur: cur != null ? cur : st.mastery, trend: cur != null && prev != null ? cur - prev : null,
+    weak: list.filter(x => x.pct < REDO_BELOW).sort((x, y) => x.pct - y.pct), strong: list.filter(x => x.pct >= 85).sort((x, y) => y.pct - x.pct),
+    cause: totalCause >= 2 && top[1] / totalCause >= 0.5 ? top[0] : '', helpShare: chk ? help / chk : 0, st, nAll: st.n,
+  };
+}
+const CAUSE_TIP = {
+  idea: 'Most misses are “didn’t get the idea”. Re-teaching works better than more practice here.',
+  fact: 'Most misses are “forgot a fact”. Short, repeated review helps, and her mistakes notebook does that.',
+  slip: 'Most misses are silly slips. She knows it. Remind her to check her work before moving on.',
+};
+const shortTxt = (t, n) => { t = String(t || ''); return t.length > n ? t.slice(0, n).replace(/\s+\S*$/, '') + '…' : t; };
+function repStatus(d) {
+  if (d.cur == null || d.nAll < 2) return ['Not enough yet', 'muted', d.nAll ? `Only ${d.nAll} lesson scored so far. A fair picture needs about 2 or more.` : 'No lessons scored yet.'];
+  return d.cur >= 85 ? ['Strong', 'g', ''] : d.cur >= REDO_BELOW ? ['On track', 'p', ''] : ['Needs help', 'bad', ''];
+}
+function overallLine(ds) {
+  const all = ds.reduce((t, d) => t + d.lessons, 0), mins = ds.reduce((t, d) => t + d.minutes, 0);
+  if (!all) return `No lessons finished in the last ${WIN_DAYS} days.`;
+  const ok = ds.filter(d => d.cur != null && d.nAll >= 2).sort((a, b) => b.cur - a.cur);
+  let t = `In the last ${WIN_DAYS} days ${kidName()} finished ${all} lesson${all > 1 ? 's' : ''} (about ${mins} minutes).`;
+  if (ok.length >= 2) t += ` Strongest: ${SUBJECTS[ok[0].subj].label} (${ok[0].cur}%). Needs the most help: ${SUBJECTS[ok[ok.length - 1].subj].label} (${ok[ok.length - 1].cur}%).`;
+  else if (ok.length === 1) t += ` ${SUBJECTS[ok[0].subj].label} is ${ok[0].cur}%.`;
+  return t;
+}
+/* ---------- Catch-up plan: built locally from her weak spots; lessons are written only when Mom taps ---------- */
+const strandOf = c => String(c).replace(/\.\d+$/, '');
+function buildPlan(scope) {
+  const subs = scope === 'all' ? Object.keys(SUBJECTS) : [scope], per = {};
+  subs.forEach(k => {
+    const d = repData(k), groups = {};
+    d.weak.forEach(w => { (groups[strandOf(w.code)] = groups[strandOf(w.code)] || []).push(w); });
+    let chunks = Object.values(groups).map(g => ({ subject: k, codes: g.map(x => x.code), pct: Math.round(g.reduce((t, x) => t + x.pct, 0) / g.length), gap: false, texts: g.map(x => x.text) }));
+    if (!chunks.length) { // no weak spots: fill the biggest gaps instead
+      const cov = d.st.cov, un = d.st.items.filter(([c]) => !(cov[c] && cov[c].total));
+      const gg = {}; un.forEach(([c, t]) => { (gg[strandOf(c)] = gg[strandOf(c)] || []).push([c, t]); });
+      chunks = Object.values(gg).slice(0, 2).map(g => ({ subject: k, codes: g.slice(0, 2).map(x => x[0]), pct: 101, gap: true, texts: g.slice(0, 2).map(x => x[1]) }));
+    }
+    per[k] = chunks.sort((a, b) => a.pct - b.pct);
+  });
+  const picks = [], need = subs.slice().sort((a, b) => ((per[a][0] || { pct: 200 }).pct) - ((per[b][0] || { pct: 200 }).pct));
+  for (let round = 0; picks.length < 4 && round < 4; round++) need.forEach(k => { if (picks.length < 4 && per[k][round]) picks.push(per[k][round]); });
+  if (!picks.length) return null;
+  const used = new Set();
+  const steps = picks.map(c => {
+    const first = shortTxt(c.texts[0], 70), title = (c.gap ? 'New topic: ' : 'Fix-it: ') + first + (c.codes.length > 1 ? ` (+${c.codes.length - 1} more)` : '');
+    const miss = S.notebook.filter(n => n.subject === c.subject && c.codes.includes(n.q.exp) && n.status === 'open').slice(0, 5).map(n => shortTxt(n.q.prompt, 90));
+    const focus = c.codes.map((x, i) => `${x}: ${c.texts[i]}`).join('; ');
+    const ex = S.order.map(id => S.lessons[id]).filter(L => L && L.meta.subject === c.subject && !used.has(L.id) && L.meta.expectations.some(x => c.codes.includes(x)) && lessonInfo(L).group === 'redo')[0];
+    if (ex) used.add(ex.id);
+    return { id: uid(), subject: c.subject, title, focus, codes: c.codes, gap: c.gap, pct: c.pct, notes: miss.length ? 'She recently got these wrong: ' + miss.join(' | ') : '', lessonId: ex ? ex.id : null, existing: !!ex, est: ex ? estMinutes(ex) : 18 };
+  });
+  return { id: uid(), at: Date.now(), scope, steps };
+}
+const stepDone = st => S.plan && S.results.some(r => r.lessonId === st.lessonId && st.lessonId && r.at > S.plan.at);
+function planNext() {
+  const P = S.plan; if (!P) return null;
+  const k = P.steps.findIndex(st => !stepDone(st) && st.lessonId !== S.todayLessonId); if (k < 0) return null;
+  const st = P.steps[k], L = st.lessonId && S.lessons[st.lessonId], tag = `Step ${k + 1} of ${P.steps.length}. `;
+  if (L) return { subject: st.subject, lesson: L, plan: true, why: tag + shortTxt(st.focus, 110) };
+  return { subject: st.subject, title: st.title, make: { topic: st.title.replace(/^(Fix-it|New topic): /, '') + '. ' + st.focus + (st.notes ? ' ' + st.notes : ''), expCode: st.codes[0], planStepId: st.id }, plan: true, why: tag + shortTxt(st.focus, 110) };
+}
+A.planBuild = v => {
+  const P = buildPlan(v || 'all');
+  if (!P) { toast('Nothing to plan yet. Finish a few lessons first.'); return; }
+  S.plan = P; save(); render(); toast('Plan ready. Nothing was written yet, so it cost nothing.');
+};
+A.planClear = () => { S.plan = null; save(); render(); };
+A.planStep = id => {
+  const P = S.plan, st = P && P.steps.find(x => x.id === id); if (!st) return;
+  const L = st.lessonId && S.lessons[st.lessonId];
+  if (L) { A.assignLesson(L.id); return; }
+  if (!S.settings.apiKey) { toast('First add your Claude key in Settings.'); go('settings'); return; }
+  startGen({ subject: st.subject, expCode: st.codes[0], mode: 'topic', topic: st.title.replace(/^(Fix-it|New topic): /, '') + '. ' + st.focus + (st.notes ? ' ' + st.notes : ''), text: '', file: null, split: false, short: true, autoAssign: true, planStepId: st.id });
+};
+function planCard() {
+  const P = S.plan; if (!P) return '';
+  const done = P.steps.filter(stepDone).length, mins = P.steps.reduce((t, x) => t + x.est, 0), nextI = P.steps.findIndex(st => !stepDone(st));
+  return `<div class="card plan"><div class="row"><h2 style="flex:1 1 0;margin:0;text-align:left">Catch-up plan</h2><span class="chip">${done} of ${P.steps.length} done</span></div>
+  <p class="muted">${P.scope === 'all' ? 'All subjects' : esc(SUBJECTS[P.scope].label)} · about ${mins} min in total, one small lesson at a time. Nothing is written until you tap a step.</p>
+  <ul class="list">${P.steps.map((st, i) => { const L = st.lessonId && S.lessons[st.lessonId], d = stepDone(st), today = st.lessonId && st.lessonId === S.todayLessonId;
+    const min = L ? estMinutes(L) : st.est;
+    return `<li class="item"><span class="num ${d ? 'ok' : ''}">${d ? '✓' : i + 1}</span><div class="grow"><div class="t">${esc(st.title)}</div><div class="s">${SUBJECTS[st.subject].emoji} ${esc(SUBJECTS[st.subject].label)} · about ${min} min${st.existing ? ' · redo of a lesson you have' : L ? ' · written' : ' · not written yet'}</div></div>
+    ${d ? '<span class="chip g">Done</span>' : today ? '<span class="chip p">Assigned</span>' : i === nextI || L ? `<button class="sm" data-a="planStep" data-v="${st.id}"${GEN && GEN.status === 'running' ? ' disabled' : ''}>${L ? 'Assign' : 'Write &amp; assign'}</button>` : ''}</li>`; }).join('')}</ul>
+  <div class="row"><button class="ghost danger" data-a="planClear">Start over</button></div></div>`;
+}
+VIEWS.report = () => {
+  const subs = Object.keys(SUBJECTS), ds = subs.map(repData), anyData = S.results.length > 0;
+  const card = d => {
+    const [lab, cls, note] = repStatus(d), k = d.subj, tr = d.trend;
+    return `<div class="card rep s-${k}"><div class="row" style="align-items:center"><span class="emo" style="font-size:30px">${SUBJECTS[k].emoji}</span><h2 style="flex:1 1 0;margin:0;text-align:left">${SUBJECTS[k].label}</h2><span class="chip ${cls === 'bad' ? 'bad' : cls}">${lab}</span></div>
+    ${d.cur == null ? '' : `<div class="bignum">${d.cur}%${tr != null && Math.abs(tr) >= 5 ? `<small>${tr > 0 ? '▲ up ' : '▼ down '}${Math.abs(tr)} points on last month</small>` : d.cur != null && tr != null ? '<small>steady</small>' : ''}</div>`}
+    <div class="cov"><i style="width:${d.st.total ? Math.round(100 * d.st.covered / d.st.total) : 0}%"></i></div><p class="muted"><small>${d.st.covered} of ${d.st.total} Grade 5 topics practised · ${d.lessons} lesson${d.lessons === 1 ? '' : 's'} in the last ${WIN_DAYS} days</small></p>
+    ${note ? `<p class="muted">${esc(note)}</p>` : ''}
+    ${d.strong.length ? `<p><b>Good at</b><br>${d.strong.slice(0, 3).map(x => `${esc(shortTxt(x.text, 70))} <span class="chip g">${x.pct}%</span>`).join('<br>')}</p>` : ''}
+    ${d.weak.length ? `<p><b>Needs help</b><br>${d.weak.slice(0, 4).map(x => `${esc(shortTxt(x.text, 70))} <span class="chip bad">${x.pct}%</span>`).join('<br>')}</p>` : d.cur != null && d.nAll >= 2 ? '<p class="muted">No weak spots found.</p>' : ''}
+    ${d.cause ? `<p class="muted">${CAUSE_TIP[d.cause]}</p>` : ''}
+    ${d.helpShare > 0.4 ? `<p class="muted">She used extra help on about ${Math.round(d.helpShare * 100)}% of check questions, so her score may be a little generous.</p>` : ''}
+    ${d.weak.length ? `<button class="ghost noprint" data-a="planBuild" data-v="${k}">Catch-up plan for ${SUBJECTS[k].label}</button>` : ''}</div>`;
+  };
+  return `
+<div class="topbar"><span class="who">Report</span><button class="noprint" data-a="printReport">Share / Print</button></div>
+<div class="hello" style="margin-bottom:6px"><div><h1>How ${esc(kidName())} is doing</h1><div class="muted"><small>${new Date().toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })} · last ${WIN_DAYS} days · written by the app from her scored lessons</small></div></div></div>
+<div class="card"><p style="margin:0;font-size:20px">${esc(overallLine(ds))}</p></div>
+${planCard()}
+${!S.plan && anyData ? `<button class="big primary noprint" data-a="planBuild" data-v="all">Build a catch-up plan</button><p class="muted noprint"><small>Makes about 4 small lessons (15–20 min each) from her weak spots. It’s free to build.</small></p>` : ''}
+${ds.map(card).join('')}
+<div class="noprint">${focusBlock()}
+<div class="card"><ul class="list"><li class="item" data-a="go" data-v="curriculum" style="cursor:pointer"><div class="grow t">📚 Grade 5 curriculum map</div><span class="muted">›</span></li><li class="item" data-a="go" data-v="results" style="cursor:pointer"><div class="grow t">📊 All results, question by question</div><span class="muted">›</span></li></ul></div></div>`;
+};
+A.printReport = () => { try { window.print(); } catch (e) { toast('Use Share → Print in Safari.'); } };
+const TAB_VIEWS = { momHome: 'home', lessons: 'lessons', report: 'report', settings: 'settings' };
+const TABICON = {
+  home: '<path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/>',
+  lessons: '<path d="M4 5a2 2 0 012-2h13v16H6a2 2 0 00-2 2zM4 19a2 2 0 012-2h13M9 7h6"/>',
+  report: '<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>',
+  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
+};
+function tabbar(active) {
+  const t = [['momHome', 'home', 'Home'], ['lessons', 'lessons', 'Lessons'], ['report', 'report', 'Report'], ['settings', 'settings', 'Settings']];
+  return `<nav class="tabbar">${t.map(([v, k, l]) => `<button class="${active === k ? 'on' : ''}" data-a="go" data-v="${v}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">${TABICON[k]}</svg>${l}</button>`).join('')}</nav>`;
+}
+function homeHero() {
+  const nd = planNext() || nudge();
+  if (!nd) return `<div class="hero s-math"><span class="mark">✨</span><div class="eyebrow">Let’s begin</div><h1>Make ${esc(kidName())}’s first lesson</h1><p>Type a topic, paste a worksheet, or snap a photo.</p><button class="go" data-a="newLesson">＋ New lesson</button></div>`;
+  const L = nd.lesson, mins = L ? estMinutes(L) : 18;
+  const title = L ? L.meta.title : nd.title || `New ${SUBJECTS[nd.subject].label} lesson`;
+  const btn = L ? `<button class="go" data-a="nudgeAssign" data-v="${L.id}">${S.todayLessonId ? 'Assign instead' : 'Assign'}</button>` : `<button class="go" data-a="nudgeMake">Make &amp; assign</button>`;
+  return `<div class="hero s-${nd.subject}"><span class="mark">${SUBJECTS[nd.subject].emoji}</span>
+  <div class="eyebrow">${nd.plan ? 'Catch-up plan' : S.todayLessonId ? 'Up next' : 'Suggested for today'}</div><h1>${esc(title)}</h1>
+  <p>${esc(nd.why)}</p><p class="meta">About ${mins} min${L ? '' : ' · uses a few cents to write'}</p>${btn}</div>`;
+}
 VIEWS.momHome = () => {
-  const pend = S.results.filter(r => !r.accepted);
-  const flags = S.flags.filter(f => f.status === 'open');
+  const pend = S.results.filter(r => !r.accepted), flags = S.flags.filter(f => f.status === 'open');
   const needBackup = S.results.length > 0 && Date.now() - (S.settings.lastExport || 0) > 14 * 864e5;
+  const hr = new Date().getHours(), hi = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
+  const strip = [
+    !S.settings.apiKey ? ['Add your Claude key to make lessons', 'settings', 'Add'] : null,
+    pend.length ? [`${pend.length} result${pend.length > 1 ? 's' : ''} to check`, 'results', 'View'] : null,
+    flags.length ? [`${flags.length} flagged question${flags.length > 1 ? 's' : ''}`, 'flags', 'View'] : null,
+    needBackup ? ['Save a backup of her progress', 'exportData', 'Save'] : null,
+  ].filter(Boolean);
+  const tile = k => { const x = subjStats(k); return `<button class="tile s-${k}" data-a="go" data-v="report">${ringSvg(x.total ? Math.max(x.covered / x.total, x.covered ? 0.06 : 0) : 0, '', SUBJECTS[k].emoji)}<div><b>${SUBJECTS[k].label}</b><span class="${x.mastery != null && x.mastery < REDO_BELOW ? 'low' : ''}">${x.mastery == null ? 'No score yet' : x.mastery + '% lately'}</span><small>${x.covered} of ${x.total} topics</small></div></button>`; };
+  return `
+<div class="hello"><div><div class="muted"><small>${hi}</small></div><h1>How’s ${esc(kidName())} doing?</h1></div><button class="topbtn" data-a="switchUser">Switch user</button></div>
+${GEN && GEN.status === 'running' ? `<div class="strip" data-a="go" data-v="generating"><span>✏️ Writing a lesson…</span><b>See</b></div>` : ''}
+${strip.map(x => `<div class="strip" data-a="${x[1] === 'exportData' ? 'exportData' : 'go'}" data-v="${x[1]}"><span>${esc(x[0])}</span><b>${x[2]}</b></div>`).join('')}
+${homeHero()}
+<div class="tiles">${Object.keys(SUBJECTS).map(tile).join('')}</div>
+<button class="big ghost" data-a="newLesson">＋ New lesson</button>`;
+};
+VIEWS.lessons = () => {
   const writing = [];
   Object.values(S.sequences).forEach(seq => seq.lessons.forEach((e, k) => { if (!e.lessonId && e.status !== 'deleted') writing.push({ seq, e, k }); }));
   return `
-<div class="topbar"><span class="who">👩 Mom</span><button data-a="switchUser">Switch user</button></div>
-${!S.settings.apiKey ? `<div class="banner"><p>Add your Claude key to make lessons.</p><button data-a="go" data-v="settings">Add key</button></div>` : ''}
-${needBackup ? `<div class="banner"><p>💾 It’s been a while. Save a backup of ${esc(kidName())}'s progress?</p><button data-a="exportData">Save backup</button></div>` : ''}
-<button class="big primary" data-a="newLesson">＋ New lesson</button>
-${GEN && GEN.status === 'running' ? `<div class="card" data-a="go" data-v="generating" style="cursor:pointer"><b>✏️ Writing a lesson…</b> <span class="muted">tap to see</span></div>` : ''}
-${pend.length ? `<h3>Results to check</h3><div class="card"><ul class="list">${pend.map(r => `
-  <li class="item"><div class="grow"><div class="t">${esc(r.title)}</div><div class="s">${fmtDate(r.at)} · ${r.mastery}% on the check · ${r.minutes} min</div></div>
-  <button class="sm" data-a="openResult" data-v="${r.id}">View</button><button class="sm" data-a="acceptResult" data-v="${r.id}">Accept</button></li>`).join('')}</ul></div>` : ''}
-${flags.length ? `<button class="big ghost" data-a="go" data-v="flags">🚩 ${flags.length} question${flags.length > 1 ? 's' : ''} ${esc(kidName())} flagged</button>` : ''}
-${overviewBlock()}
-${lessonsBlock(writing)}
-<div class="row"><button class="big ghost" data-a="go" data-v="curriculum">📚 Curriculum</button><button class="big ghost" data-a="go" data-v="results">📊 All results</button><button class="big ghost" data-a="go" data-v="rewards">🎁 Rewards</button><button class="big ghost" data-a="go" data-v="settings">⚙️ Settings</button></div>`;
+<div class="topbar"><span class="who">Lessons</span><button data-a="newLesson">＋ New</button></div>
+${GEN && GEN.status === 'running' ? `<div class="strip" data-a="go" data-v="generating"><span>✏️ Writing a lesson…</span><b>See</b></div>` : ''}
+${lessonsBlock(writing)}`;
 };
 let SHOW_OLD = false;
 A.toggleOld = () => { SHOW_OLD = !SHOW_OLD; render(); };
@@ -1050,7 +1205,8 @@ Set "sequence" to null.` }];
   const splitRule = req.split
     ? 'If this is too much for one 30–35 minute Grade 5 lesson, plan a sequence of 2–3 lessons in teaching order, return it in "sequence", and build ONLY lesson 1 in full in "lesson". Otherwise set "sequence" to null.'
     : 'Make exactly ONE lesson that covers the whole thing. Set "sequence" to null.';
-  if (req.mode === 'topic') return [{ type: 'text', text: `${subj}\nTopic: ${req.topic}\n${splitRule}` }];
+  const shortRule = req.short ? '\nSHORT CATCH-UP LESSON: this replaces the 30–35 minute session. Total target 15–20 minutes: 1–2 explain cards, 1–2 worked examples, exactly 1 pencil task (about 4 minutes), 5 practice questions and 3 check questions, with at least 3 hands-on activities among the practice questions. Aim at the specific mistakes below; do not re-teach the whole unit.' : '';
+  if (req.mode === 'topic') return [{ type: 'text', text: `${subj}\nTopic: ${req.topic}${shortRule}\n${splitRule}` }];
   if (req.mode === 'text') return [{ type: 'text', text: `${subj}\nHere is the worksheet or notes text:\n<source>\n${req.text}\n</source>\n${splitRule}` }];
   const block = req.file.kind === 'pdf'
     ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: req.file.data } }
@@ -1204,9 +1360,10 @@ async function startGen(req) {
     const out = await authorLesson(req, n => { job.chars = n; updateGenBar(); }, job.ctrl.signal);
     if (GEN !== job) return;
     const L = saveNewLesson(out, req);
+    if (req.planStepId && S.plan) { const st = S.plan.steps.find(x => x.id === req.planStepId); if (st) { st.lessonId = L.id; st.status = 'ready'; } }
     if (req.autoAssign && !S.attempt) { S.todayLessonId = L.id; logAssign(L.id); save(); }
     job.status = 'done'; job.lessonId = L.id;
-    if (view.name === 'generating') go('summary', { id: L.id }); else { toast('Your lesson is ready.'); if (view.name === 'momHome') render(); }
+    if (view.name === 'generating') go('summary', { id: L.id }); else { toast('Your lesson is ready.'); if (['momHome', 'lessons', 'report'].includes(view.name)) render(); }
     pumpSequences();
   } catch (e) {
     if (GEN !== job) return;
@@ -1252,34 +1409,29 @@ function saveNewLesson(out, req) {
 }
 /* Write later lessons of a sequence quietly in the background. Retries on next app open if it fails. */
 let pumping = false;
-async function pumpSequences() {
-  if (pumping || !S.settings.apiKey) return;
-  pumping = true;
+async function pumpSequences() { /* multi-part lessons are written only when Mom taps (see writeStep) */ }
+let WRITING_STEP = false;
+A.writeStep = async v => {
+  const [sid, ks] = String(v).split(':'), k = +ks, seq = S.sequences[sid]; if (!seq || WRITING_STEP) return;
+  if (!S.settings.apiKey) { toast('First add your Claude key in Settings.'); go('settings'); return; }
+  const e = seq.lessons[k]; if (!e || e.lessonId) return;
+  WRITING_STEP = true; e.status = 'writing'; refreshMom();
   try {
-    for (const seq of Object.values(S.sequences)) {
-      for (let k = 1; k < seq.lessons.length; k++) {
-        const e = seq.lessons[k];
-        if (e.lessonId || e.status === 'deleted') continue;
-        e.status = 'writing'; refreshMom();
-        try {
-          const out = await authorLesson({ subject: seq.subject, mode: 'sequence', seq, k });
-          if (!S.sequences[seq.id]) break;
-          const L = out.lesson;
-          L.id = uid(); L.createdAt = Date.now(); L.source = 'sequence'; L.status = 'ready'; L.explainUsed = 0;
-          Object.assign(L.meta, { sequenceId: seq.id, sequencePosition: k + 1, sequenceTotal: seq.lessons.length });
-          S.lessons[L.id] = L;
-          const prevId = seq.lessons[k - 1].lessonId, pi = S.order.indexOf(prevId);
-          S.order.splice(pi >= 0 ? pi : 0, 0, L.id);
-          e.lessonId = L.id; e.status = 'ready';
-          const prev = S.lessons[prevId];
-          if (prev && prev.status === 'done' && !S.todayLessonId) { S.todayLessonId = L.id; logAssign(L.id); }
-          save(); refreshMom();
-        } catch (err) { e.status = 'error'; save(); refreshMom(); return; }
-      }
-    }
-  } finally { pumping = false; }
-}
-function refreshMom() { if (role === 'mom' && (view.name === 'momHome' || view.name === 'summary')) render(); }
+    const out = await authorLesson({ subject: seq.subject, mode: 'sequence', seq, k });
+    if (!S.sequences[seq.id]) return;
+    const L = out.lesson;
+    L.id = uid(); L.createdAt = Date.now(); L.source = 'sequence'; L.status = 'ready'; L.explainUsed = 0;
+    Object.assign(L.meta, { sequenceId: seq.id, sequencePosition: k + 1, sequenceTotal: seq.lessons.length });
+    S.lessons[L.id] = L;
+    const prevId = seq.lessons[k - 1] && seq.lessons[k - 1].lessonId, pi = S.order.indexOf(prevId);
+    S.order.splice(pi >= 0 ? pi : 0, 0, L.id);
+    e.lessonId = L.id; e.status = 'ready';
+    if (!S.attempt) { S.todayLessonId = L.id; logAssign(L.id); toast('Written and assigned.'); } else toast('Written. It’s in Lessons.');
+    save();
+  } catch (err) { e.status = 'error'; save(); toast('That one didn’t finish. Tap to retry.'); }
+  finally { WRITING_STEP = false; refreshMom(); }
+};
+function refreshMom() { if (role === 'mom' && ['momHome', 'summary', 'lessons', 'report'].includes(view.name)) render(); }
 
 /* ==================================================================
    Mom: one-screen lesson summary
@@ -2048,7 +2200,7 @@ VIEWS.results = () => `
 <div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Results</span><span></span></div>
 <div class="card">${S.results.length ? `<ul class="list">${S.results.map(r => `<li class="item"><div class="grow"><div class="t">${esc(r.title)}</div>
   <div class="s">${fmtDate(r.at)} · ${r.mastery}% · ${r.minutes} min · level ${r.maxTier}/3</div></div>
-  ${r.accepted ? '<span class="chip g">Accepted</span>' : ''}<button class="sm" data-a="openResult" data-v="${r.id}">View</button></li>`).join('')}</ul>` : '<p class="muted">No results yet.</p>'}</div>`;
+  ${r.accepted ? '<span class="chip g">Accepted</span>' : `<button class="sm" data-a="acceptResult" data-v="${r.id}">Accept</button>`}<button class="sm" data-a="openResult" data-v="${r.id}">View</button></li>`).join('')}</ul>` : '<p class="muted">No results yet.</p>'}</div>`;
 VIEWS.result = ({ id }) => {
   const r = S.results.find(x => x.id === id); if (!r) return VIEWS.results();
   const pen = r.pencil.reduce((s, p) => [s[0] + p.right, s[1] + p.of], [0, 0]);
@@ -2069,7 +2221,7 @@ ${r.missed.length ? `<h3>Questions she missed (${r.missed.length})</h3><div clas
 ${r.flagged.length ? `<h3>She flagged</h3><div class="card"><ul>${r.flagged.map(f => `<li>${esc(f)}</li>`).join('')}</ul><button class="ghost" data-a="go" data-v="flags">Review flags when you have time</button></div>` : ''}`;
 };
 A.openResult = id => go('result', { id });
-A.acceptResult = id => { const r = S.results.find(x => x.id === id); if (r) { r.accepted = true; save(); toast('Accepted ✓'); render(); } };
+A.acceptResult = id => { const r = S.results.find(x => x.id === id); if (r) { r.accepted = true; save(); if (view.name === 'results') render(); toast('Accepted ✓'); render(); } };
 VIEWS.flags = () => {
   const open = S.flags.filter(f => f.status === 'open');
   return `
@@ -2128,7 +2280,8 @@ VIEWS.settings = () => {
   FORMS.ST = { key: '', name: S.settings.learnerName };
   const k = S.settings.apiKey;
   return `
-<div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Settings</span><span></span></div>
+<div class="topbar"><span class="who">Settings</span><span></span></div>
+<div class="card"><ul class="list"><li class="item" data-a="go" data-v="rewards" style="cursor:pointer"><div class="grow t">🎁 Rewards &amp; points</div><span class="muted">›</span></li><li class="item" data-a="go" data-v="flags" style="cursor:pointer"><div class="grow t">🚩 Flagged questions</div><span class="muted">›</span></li></ul></div>
 <div class="card"><h2>Claude key</h2>
 <p class="muted">${k ? `Saved on this iPad (ends in …${esc(k.slice(-4))}).` : 'Not added yet. Get one at console.anthropic.com → API Keys.'}</p>
 <input data-bind="ST:key" type="password" placeholder="${k ? 'Paste a new key to replace it' : 'sk-ant-...'}" autocomplete="off">
