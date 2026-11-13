@@ -299,7 +299,7 @@ const CONFIG = {
   DEFAULT_RATE: 100,             // points per $1 (Mom can change this in Rewards)
   STORAGE_KEY: 'g5tutor.v1',
   SHOW_MONEY: false,             // learner screens: show dollars earned + goal progress (parked for now; points still show)
-  VERSION: 'v10 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
+  VERSION: 'v11 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -692,7 +692,7 @@ ${flags.length ? `<button class="big ghost" data-a="go" data-v="flags">🚩 ${fl
 <div class="card">${S.order.length || writing.length ? `<ul class="list">
   ${writing.map(w => `<li class="item"><div class="grow"><div class="t">${esc(w.e.title)}</div><div class="s">Lesson ${w.k + 1} of ${w.seq.lessons.length} · ${w.e.status === 'error' ? 'will retry soon' : 'being written…'}</div></div></li>`).join('')}
   ${S.order.slice(0, SHOW_OLD ? 9999 : 12).map(id => S.lessons[id]).filter(Boolean).map(L => `
-  <li class="item"><div class="grow"><div class="t">${esc(L.meta.title)}</div><div class="s">${esc(SUBJECTS[L.meta.subject]?.label || '')}${L.meta.sequenceTotal > 1 ? ` · ${L.meta.sequencePosition} of ${L.meta.sequenceTotal}` : ''} · ${fmtDate(L.createdAt)}</div></div>
+  <li class="item"><div class="grow"><div class="t">${esc(L.meta.title)}</div><div class="s">${esc(SUBJECTS[L.meta.subject]?.label || '')}${L.meta.sequenceTotal > 1 ? ` · ${L.meta.sequencePosition} of ${L.meta.sequenceTotal}` : ''} · ${fmtDate(L.createdAt)} · ~${estMinutes(L)} min</div></div>
   ${lessonStatus(L)}${S.todayLessonId === L.id ? '' : `<button class="sm" data-a="assignLesson" data-v="${L.id}">${L.status === 'done' ? 'Assign again' : 'Assign'}</button>`}<button class="sm" data-a="openSummary" data-v="${L.id}">Open</button></li>`).join('')}</ul>${S.order.length > 12 ? `<button class="link" data-a="toggleOld">${SHOW_OLD ? 'Show fewer' : 'Show all ' + S.order.length + ' lessons'}</button>` : ''}`
     : `<p class="muted">No lessons yet. Tap “New lesson” and type a topic like “Multiplying fractions”.</p>`}</div>
 <div class="row"><button class="big ghost" data-a="go" data-v="curriculum">📚 Curriculum</button><button class="big ghost" data-a="go" data-v="results">📊 All results</button><button class="big ghost" data-a="go" data-v="rewards">🎁 Rewards</button><button class="big ghost" data-a="go" data-v="settings">⚙️ Settings</button></div>`;
@@ -1291,7 +1291,7 @@ VIEWS.kidHome = () => {
 ${CONFIG.SHOW_MONEY ? goalCard() : ''}
 ${L ? `<div class="hero s-${esc(L.meta.subject)}"><span class="mark">${SUBJECTS[L.meta.subject]?.emoji || '⭐'}</span>
   <div class="eyebrow">Today’s lesson${part}</div><h1>${esc(L.meta.title)}</h1>
-  <p>About ${estMinutes(L)} minutes. Grab a pencil and paper.</p>
+  <p>Grab a pencil and paper.</p>
   <button class="go" data-a="${resumeLesson ? 'resumePlay' : 'startPlay'}">${ICON.play}${resumeLesson ? 'Keep going' : 'Let’s go'}</button></div>`
   : `<div class="card"><h2>No lesson right now</h2><p class="muted">${S.results.length ? 'Great work! Ask Mom for the next one.' : 'Ask Mom to start one.'}</p></div>`}
 ${resumeReview ? `<button class="big secondary" data-a="resumePlay">Finish your review</button>` : ''}
@@ -1412,7 +1412,7 @@ VIEWS.play = () => {
   if (!ensureStep()) { setTimeout(finishAttempt, 0); return '<div class="center-screen"><div class="big-emoji spin">⭐</div></div>'; }
   const st = a.steps[a.si], L = curLesson();
   const pct = Math.round(100 * a.si / a.steps.length);
-  const head = `<div class="playbar"><button class="x" data-a="exitPlay" aria-label="Save and exit">✕</button><div class="bar"><i style="width:${pct}%"></i></div><span class="mins">${a.mode === 'lesson' ? '~' + remainingMin(a) + ' min left' : 'Review'}</span></div>`;
+  const head = `<div class="playbar"><button class="x" data-a="exitPlay" aria-label="Save and exit">✕</button><div class="bar"><i style="width:${pct}%"></i></div><span class="mins">${a.mode === 'lesson' ? '' : 'Review'}</span></div>`;
   if (a.interject != null && st.k === 'practice' && !a.sub.fb) return head + explainCard(a.interject, true);
   if (st.k === 'warm' && !a.sub.fb && !a.sub.seen) { const r = S.review.find(x => x.id === st.id); if (r && (r.cause === 'idea' || r.cause === 'fact')) return head + reteachCard(r); }
   if (st.k === 'explain') return head + explainCard(st.i, false);
@@ -1476,7 +1476,7 @@ function pencilCard(i) {
   if (phase === 'work') {
     const w = pencilWait();
     return `<div class="card"><div class="big-emoji" style="text-align:center">✏️📄</div>
-    <div class="step-label">Pencil time · about ${P.minutes} minutes</div><h2>${esc(P.title)}</h2>
+    <div class="step-label">Pencil time</div><h2>${esc(P.title)}</h2>
     ${P.instructions ? `<p style="font-size:20px">${esc(P.instructions)}</p>` : ''}
     <ol class="problems">${P.problems.map(p => `<li>${esc(p)}</li>`).join('')}</ol>
     <p class="muted">Work these out on paper. Show your thinking!</p>
