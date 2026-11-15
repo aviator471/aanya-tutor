@@ -1,0 +1,11 @@
+{
+  "name": "aanya-tutor",
+  "private": true,
+  "description": "Single-file Grade 5 tutor. The app is index.html; this file only exists to run the tests.",
+  "scripts": {
+    "test": "node tests/e2e.js"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
+  }
+}

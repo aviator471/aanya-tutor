@@ -168,6 +168,7 @@ label{display:block;font-weight:600;margin:16px 0 6px}
 .slot.on{border:0;background:linear-gradient(135deg,#FFD84D,#FF9F0A);box-shadow:0 6px 16px rgba(255,159,10,.35)}
 .slot.bonus{width:50px;height:50px;font-size:24px}.slot.bonus.on{background:linear-gradient(135deg,var(--primary),var(--primary2));box-shadow:0 6px 16px rgba(91,91,240,.35)}
 .slot.next{border-color:var(--accent);animation:pulse 1.6s ease-in-out infinite}
+.slot.sm{width:44px;height:44px;font-size:20px;border-width:2px;font-family:var(--rounded);font-weight:800;color:var(--muted);flex:0 0 auto}.slot.sm.on{color:#fff}.item.locked{opacity:.55}
 @keyframes pulse{50%{transform:scale(1.07)}}
 .slots .plus{color:var(--muted);font-weight:800;font-size:14px;font-family:var(--rounded)}
 .wk.full{background:linear-gradient(135deg,var(--accent-soft),var(--card) 70%)}
@@ -326,10 +327,11 @@ const CONFIG = {
   POINTS: { lessonBase: 100, perCorrect: 5, streakBonus: 50, streakEvery: 3, perfectCheck: 50 },
   DEFAULT_RATE: 100,             // points per $1 (Mom can change this in Rewards)
   STORAGE_KEY: 'g5tutor.v1',
-  SHOW_MONEY: false,             // learner screens: show dollars earned + goal progress (parked for now; points still show)
+  SHOW_MONEY: true,              // learner screens: show what her points are worth in dollars + goal progress
   WEEK_GOAL: 3,                  // lessons per week (Mon-Sun, iPad time)
   WEEK_MIN_MINUTES: 8,           // a finished lesson counts toward the week only with at least this much real work
-  WEEK_BONUS: 2,                 // bonus stars after the goal (so 3 + 2 = a "super week"); nothing extra beyond that
+  WEEK_BONUS: 2,                 // bonus slots Mom can add after the 3 (they unlock once 3 are done)
+  BONUS_MULT: 2,                 // a bonus lesson's base points are multiplied by this
   VERSION: 'v15 · 15 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
@@ -540,6 +542,7 @@ const DEFAULT_STATE = () => ({
   points: { balance: 0, earned: 0, log: [] },
   streak: { count: 0, last: null, best: 0 },
   goals: [], redeemables: [],
+  week: null, breaks: [], weekLeft: null,
 });
 let S;
 function load() {
@@ -568,6 +571,7 @@ const VIEWS = {}, A = {};
 const MOM_VIEWS = ['curriculum', 'momHome', 'lessons', 'report', 'newLesson', 'generating', 'summary', 'edit', 'results', 'result', 'flags', 'rewards', 'settings', 'welcome'];
 function go(name, p = {}) { view = { name, p }; render(); window.scrollTo(0, 0); }
 function render() {
+  if (S) ensureWeek();
   if (MOM_VIEWS.includes(view.name) && role !== 'mom') view = { name: 'gate', p: {} };
   clearInterval(TIMER); TIMER = null;
   document.querySelectorAll('.confetti').forEach(e => e.remove());
@@ -713,14 +717,14 @@ function logAssign(id) {
 function lessonInfo(L) {
   const res = S.results.filter(r => r.lessonId === L.id); // newest first
   const asg = (S.assignLog || []).filter(x => x.id === L.id).pop();
-  const today = S.todayLessonId === L.id;
+  const today = inWeek(L.id) && !slotDone(L.id);
   let group = 'ready', line = '';
   if (res.length) {
     const r = res[0], prev = res[1];
     group = r.mastery < REDO_BELOW ? 'redo' : 'done';
     line = `Done ${res.length}× · last ${fmtDate(r.at)} · <b>${r.mastery}%</b>${prev ? ` (was ${prev.mastery}%)` : ''}`;
   } else if (L.status === 'done') { group = 'done'; line = 'Done (older lesson, no score kept)'; }
-  else if (today) line = 'Assigned now · not finished yet';
+  else if (today) line = 'In this week’s plan · not done yet';
   else if (asg) line = `Assigned ${fmtDate(asg.at)} · not finished`;
   else line = 'Not assigned yet';
   return { group, line, today, res };
@@ -731,7 +735,7 @@ function lessonRow(L) {
   return `<li class="item"><div class="grow"><div class="t">${esc(L.meta.title)}</div>
   <div class="s">${L.meta.sequenceTotal > 1 ? `Lesson ${L.meta.sequencePosition} of ${L.meta.sequenceTotal} · ` : ''}~${estMinutes(L)} min · made ${fmtDate(L.createdAt)}</div>
   <div class="s"${bad ? ' style="color:var(--danger);font-weight:650"' : ''}>${i.line}${bad ? ' · needs another go' : ''}</div></div>
-  ${i.today ? `<span class="chip p">${inProg ? 'In progress' : 'Today'}</span>` : `<button class="sm" data-a="assignLesson" data-v="${L.id}">${i.res.length || L.status === 'done' ? 'Assign again' : 'Assign'}</button>`}<button class="sm" data-a="openSummary" data-v="${L.id}">Open</button></li>`;
+  ${i.today ? `<span class="chip p">${inProg ? 'In progress' : 'This week'}</span>` : `<button class="sm" data-a="assignLesson" data-v="${L.id}">${i.res.length || L.status === 'done' ? 'Add again' : '＋ This week'}</button>`}<button class="sm" data-a="openSummary" data-v="${L.id}">Open</button></li>`;
 }
 function seqOrder(list) { // keep sequences together, in lesson order; groups ordered by oldest lesson
   const first = {}; list.forEach(L => { const k = L.meta.sequenceId || L.id; first[k] = Math.min(first[k] ?? Infinity, L.createdAt); });
@@ -743,14 +747,13 @@ function lessonsBlock(writing) {
   const waiting = sub => all.filter(L => (sub === 'all' || L.meta.subject === sub) && info.get(L).group === 'ready' && !info.get(L).today).length;
   const tabs = ['all', ...Object.keys(SUBJECTS)];
   const inTab = all.filter(L => LTAB === 'all' || L.meta.subject === LTAB);
-  const today = S.lessons[S.todayLessonId];
   const grp = g => inTab.filter(L => info.get(L).group === g && !info.get(L).today);
   const ready = seqOrder(grp('ready')), redo = grp('redo').sort((x, y) => info.get(x).res[0].mastery - info.get(y).res[0].mastery);
   let done = grp('done').sort((x, y) => ((info.get(x).res[0] || { at: 0 }).at - (info.get(y).res[0] || { at: 0 }).at));
   const sec = (title, arr, note) => arr.length ? `<h4 class="lh">${title} <span class="muted">${arr.length}</span></h4>${note ? `<p class="muted"><small>${note}</small></p>` : ''}<div class="card"><ul class="list">${arr.map(lessonRow).join('')}</ul></div>` : '';
   const doneShown = SHOW_OLD ? done : done.slice(0, 8);
   return `<div class="tabs" style="overflow-x:auto">${tabs.map(t => { const n = waiting(t); return `<button class="${LTAB === t ? 'on' : ''}" data-a="lessonTab" data-v="${t}" style="white-space:nowrap">${t === 'all' ? 'All' : (SUBJECTS[t].emoji + ' ' + SUBJECTS[t].label)}${n ? ` <small style="color:var(--primary)">●${n}</small>` : ''}</button>`; }).join('')}</div>
-${today ? `<h4 class="lh">Assigned now</h4><div class="card"><ul class="list">${lessonRow(today)}</ul></div>` : ''}
+${momPlanCard()}
 ${writing.length ? `<h4 class="lh">Planned, not written yet</h4><div class="card"><ul class="list">${writing.map(w => { const prevOk = w.k === 0 || w.seq.lessons[w.k - 1].lessonId; return `<li class="item"><div class="grow"><div class="t">${esc(w.e.title)}</div><div class="s">Lesson ${w.k + 1} of ${w.seq.lessons.length} · ~18 min · ${w.e.status === 'writing' ? 'being written…' : w.e.status === 'error' ? 'didn’t finish, tap to retry' : 'not written yet'}</div></div>${w.e.status === 'writing' ? '' : prevOk ? `<button class="sm" data-a="writeStep" data-v="${w.seq.id}:${w.k}">Write &amp; assign</button>` : '<span class="chip">After the one before</span>'}</li>`; }).join('')}</ul><p class="muted"><small>Writing a lesson uses a few cents. It only happens when you tap.</small></p></div>` : ''}
 ${sec('Ready to assign', ready)}
 ${sec('Redo? (under ' + REDO_BELOW + '%)', redo, 'Lowest score first.')}
@@ -781,7 +784,7 @@ function nudge() {
     return (x.mastery == null ? 25 : Math.max(0, 90 - x.mastery)) + (x.mastery != null && x.mastery < REDO_BELOW ? 30 : 0) + (1 - x.covered / x.total) * 15 + days * 1.5 + (f && f.subject === k ? 80 : 0);
   };
   const top = subs.slice().sort((a, b) => need(b) - need(a))[0], x = st[top], label = SUBJECTS[top].label;
-  const lessons = S.order.map(id => S.lessons[id]).filter(L => L && L.meta.subject === top && L.id !== S.todayLessonId);
+  const lessons = S.order.map(id => S.lessons[id]).filter(L => L && L.meta.subject === top && !inWeek(L.id));
   const info = new Map(lessons.map(L => [L, lessonInfo(L)]));
   const make = (topic, expCode, why) => ({ subject: top, make: { topic, expCode }, why });
   if (f && f.subject === top) {
@@ -900,7 +903,7 @@ function buildPlan(scope) {
 const stepDone = st => S.plan && S.results.some(r => r.lessonId === st.lessonId && st.lessonId && r.at > S.plan.at);
 function planNext() {
   const P = S.plan; if (!P) return null;
-  const k = P.steps.findIndex(st => !stepDone(st) && st.lessonId !== S.todayLessonId); if (k < 0) return null;
+  const k = P.steps.findIndex(st => !stepDone(st) && !inWeek(st.lessonId)); if (k < 0) return null;
   const st = P.steps[k], L = st.lessonId && S.lessons[st.lessonId], tag = `Step ${k + 1} of ${P.steps.length}. `;
   if (L) return { subject: st.subject, lesson: L, plan: true, why: tag + shortTxt(st.focus, 110) };
   return { subject: st.subject, title: st.title, make: { topic: st.title.replace(/^(Fix-it|New topic): /, '') + '. ' + st.focus + (st.notes ? ' ' + st.notes : ''), expCode: st.codes[0], planStepId: st.id }, plan: true, why: tag + shortTxt(st.focus, 110) };
@@ -923,10 +926,10 @@ function planCard() {
   const done = P.steps.filter(stepDone).length, mins = P.steps.reduce((t, x) => t + x.est, 0), nextI = P.steps.findIndex(st => !stepDone(st));
   return `<div class="card plan"><div class="row"><h2 style="flex:1 1 0;margin:0;text-align:left">Catch-up plan</h2><span class="chip">${done} of ${P.steps.length} done</span></div>
   <p class="muted">${P.scope === 'all' ? 'All subjects' : esc(SUBJECTS[P.scope].label)} · about ${mins} min in total, one small lesson at a time. Nothing is written until you tap a step.</p>
-  <ul class="list">${P.steps.map((st, i) => { const L = st.lessonId && S.lessons[st.lessonId], d = stepDone(st), today = st.lessonId && st.lessonId === S.todayLessonId;
+  <ul class="list">${P.steps.map((st, i) => { const L = st.lessonId && S.lessons[st.lessonId], d = stepDone(st), today = st.lessonId && inWeek(st.lessonId);
     const min = L ? estMinutes(L) : st.est;
     return `<li class="item"><span class="num ${d ? 'ok' : ''}">${d ? '✓' : i + 1}</span><div class="grow"><div class="t">${esc(st.title)}</div><div class="s">${SUBJECTS[st.subject].emoji} ${esc(SUBJECTS[st.subject].label)} · about ${min} min${st.existing ? ' · redo of a lesson you have' : L ? ' · written' : ' · not written yet'}</div></div>
-    ${d ? '<span class="chip g">Done</span>' : today ? '<span class="chip p">Assigned</span>' : i === nextI || L ? `<button class="sm" data-a="planStep" data-v="${st.id}"${GEN && GEN.status === 'running' ? ' disabled' : ''}>${L ? 'Assign' : 'Write &amp; assign'}</button>` : ''}</li>`; }).join('')}</ul>
+    ${d ? '<span class="chip g">Done</span>' : today ? '<span class="chip p">This week</span>' : i === nextI || L ? `<button class="sm" data-a="planStep" data-v="${st.id}"${GEN && GEN.status === 'running' ? ' disabled' : ''}>${L ? 'Assign' : 'Write &amp; assign'}</button>` : ''}</li>`; }).join('')}</ul>
   <div class="row"><button class="ghost danger" data-a="planClear">Start over</button></div></div>`;
 }
 VIEWS.report = () => {
@@ -947,7 +950,7 @@ VIEWS.report = () => {
 <div class="topbar"><span class="who">Report</span><button class="noprint" data-a="printReport">Share / Print</button></div>
 <div class="hello" style="margin-bottom:6px"><div><h1>How ${esc(kidName())} is doing</h1><div class="muted"><small>${new Date().toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })} · last ${WIN_DAYS} days · written by the app from her scored lessons</small></div></div></div>
 <div class="card"><p style="margin:0;font-size:20px">${esc(overallLine(ds))}</p></div>
-${anyData ? momWeekCard(true) : ''}
+${anyData || S.breaks.length ? momWeekCard(true) : ''}
 ${planCard()}
 ${!S.plan && anyData ? `<button class="big primary noprint" data-a="planBuild" data-v="all">Build a catch-up plan</button><p class="muted noprint"><small>Makes about 4 small lessons (15–20 min each) from her weak spots. It’s free to build.</small></p>` : ''}
 ${ds.map(card).join('')}
@@ -971,9 +974,9 @@ function homeHero() {
   if (!nd) return `<div class="hero s-math"><span class="mark">✨</span><div class="eyebrow">Let’s begin</div><h1>Make ${esc(kidName())}’s first lesson</h1><p>Type a topic, paste a worksheet, or snap a photo.</p><button class="go" data-a="newLesson">＋ New lesson</button></div>`;
   const L = nd.lesson, mins = L ? estMinutes(L) : 18;
   const title = L ? L.meta.title : nd.title || `New ${SUBJECTS[nd.subject].label} lesson`;
-  const btn = L ? `<button class="go" data-a="nudgeAssign" data-v="${L.id}">${S.todayLessonId ? 'Assign instead' : 'Assign'}</button>` : `<button class="go" data-a="nudgeMake">Make &amp; assign</button>`;
+  const btn = L ? `<button class="go" data-a="nudgeAssign" data-v="${L.id}">＋ Add to this week</button>` : `<button class="go" data-a="nudgeMake">Make &amp; add to this week</button>`;
   return `<div class="hero s-${nd.subject}"><span class="mark">${SUBJECTS[nd.subject].emoji}</span>
-  <div class="eyebrow">${nd.plan ? 'Catch-up plan' : S.todayLessonId ? 'Up next' : 'Suggested for today'}</div><h1>${esc(title)}</h1>
+  <div class="eyebrow">${nd.plan ? 'Catch-up plan' : 'Suggested next'}</div><h1>${esc(title)}</h1>
   <p>${esc(nd.why)}</p><p class="meta">About ${mins} min${L ? '' : ' · uses a few cents to write'}</p>${btn}</div>`;
 }
 VIEWS.momHome = () => {
@@ -985,7 +988,7 @@ VIEWS.momHome = () => {
     pend.length ? [`${pend.length} result${pend.length > 1 ? 's' : ''} to check`, 'results', 'View'] : null,
     flags.length ? [`${flags.length} flagged question${flags.length > 1 ? 's' : ''}`, 'flags', 'View'] : null,
     needBackup ? ['Save a backup of her progress', 'exportData', 'Save'] : null,
-    (() => { const w = weekList(1)[0]; return w.count < CONFIG.WEEK_GOAL && !S.todayLessonId ? [`${kidName()} is at ${w.count} of ${CONFIG.WEEK_GOAL} this week and has no lesson assigned`, 'lessons', 'Assign'] : null; })(),
+    (() => { const W = ensureWeek(), n = CONFIG.WEEK_GOAL - W.core.length; return n > 0 && !W.brk ? [`This week’s plan needs ${n} more lesson${n === 1 ? '' : 's'}`, 'lessons', 'Add'] : null; })(),
   ].filter(Boolean);
   const tile = k => { const x = subjStats(k); return `<button class="tile s-${k}" data-a="go" data-v="report">${ringSvg(x.total ? Math.max(x.covered / x.total, x.covered ? 0.06 : 0) : 0, '', SUBJECTS[k].emoji)}<div><b>${SUBJECTS[k].label}</b><span class="${x.mastery != null && x.mastery < REDO_BELOW ? 'low' : ''}">${x.mastery == null ? 'No score yet' : x.mastery + '% lately'}</span><small>${x.covered} of ${x.total} topics</small></div></button>`; };
   return `
@@ -993,7 +996,8 @@ VIEWS.momHome = () => {
 ${GEN && GEN.status === 'running' ? `<div class="strip" data-a="go" data-v="generating"><span>✏️ Writing a lesson…</span><b>See</b></div>` : ''}
 ${strip.map(x => `<div class="strip" data-a="${x[1] === 'exportData' ? 'exportData' : 'go'}" data-v="${x[1]}"><span>${esc(x[0])}</span><b>${x[2]}</b></div>`).join('')}
 ${homeHero()}
-${S.results.length ? momWeekCard(false) : ''}
+${momPlanCard()}
+${S.results.length || S.breaks.length ? momWeekCard(false) : ''}
 <div class="tiles">${Object.keys(SUBJECTS).map(tile).join('')}</div>
 <button class="big ghost" data-a="newLesson">＋ New lesson</button>`;
 };
@@ -1007,13 +1011,7 @@ ${lessonsBlock(writing)}`;
 };
 let SHOW_OLD = false;
 A.toggleOld = () => { SHOW_OLD = !SHOW_OLD; render(); };
-A.assignLesson = id => {
-  const L = S.lessons[id]; if (!L) return;
-  if (S.attempt && S.attempt.mode === 'lesson' && S.attempt.lessonId !== id && !confirm(kidName() + ' is part-way through another lesson. Switch? Her progress on it will be cleared.')) return;
-  S.todayLessonId = id; logAssign(id);
-  if (S.attempt && S.attempt.mode === 'lesson' && S.attempt.lessonId !== id) S.attempt = null;
-  save(); toast('Assigned to ' + kidName() + ': ' + L.meta.title); render();
-};
+A.assignLesson = id => { addToWeek(id); render(); };
 A.switchUser = () => { role = null; go('gate'); };
 A.openSummary = id => go('summary', { id });
 
@@ -1382,7 +1380,7 @@ async function startGen(req) {
     if (GEN !== job) return;
     const L = saveNewLesson(out, req);
     if (req.planStepId && S.plan) { const st = S.plan.steps.find(x => x.id === req.planStepId); if (st) { st.lessonId = L.id; st.status = 'ready'; } }
-    if (req.autoAssign && !S.attempt) { S.todayLessonId = L.id; logAssign(L.id); save(); }
+    if (req.autoAssign) addToWeek(L.id);
     job.status = 'done'; job.lessonId = L.id;
     if (view.name === 'generating') go('summary', { id: L.id }); else { toast('Your lesson is ready.'); if (['momHome', 'lessons', 'report'].includes(view.name)) render(); }
     pumpSequences();
@@ -1447,7 +1445,7 @@ A.writeStep = async v => {
     const prevId = seq.lessons[k - 1] && seq.lessons[k - 1].lessonId, pi = S.order.indexOf(prevId);
     S.order.splice(pi >= 0 ? pi : 0, 0, L.id);
     e.lessonId = L.id; e.status = 'ready';
-    if (!S.attempt) { S.todayLessonId = L.id; logAssign(L.id); toast('Written and assigned.'); } else toast('Written. It’s in Lessons.');
+    toast(addToWeek(L.id, true) ? 'Written and added to this week.' : 'Written. It’s in Lessons (this week is full).');
     save();
   } catch (err) { e.status = 'error'; save(); toast('That one didn’t finish. Tap to retry.'); }
   finally { WRITING_STEP = false; refreshMom(); }
@@ -1474,7 +1472,7 @@ VIEWS.summary = ({ id }) => {
   <h3>What she’ll practice</h3>
   ${m.forMom ? `<p>${esc(m.forMom)}</p>` : ''}
   <p class="muted">${L.practice.length} practice questions (easy → harder) · ${L.offscreen.length} pencil tasks · ${L.check.length}-question check · about ${estMinutes(L)} min</p>
-  <button class="big primary" data-a="startLesson" data-v="${id}">▶ ${L.status === 'done' ? 'Do it again' : S.todayLessonId === id ? 'Hand it to ' + esc(kidName()) : 'START'}</button>
+  <button class="big primary" data-a="startLesson" data-v="${id}">▶ ${L.status === 'done' ? 'Do it again' : inWeek(id) ? 'Hand it to ' + esc(kidName()) : 'START'}</button>
   <div class="row">
     <button class="ghost" data-a="addFun" data-v="${id}">✨ Add fun activities</button>
     <button class="ghost" data-a="editLesson" data-v="${id}">Edit (optional)</button>
@@ -1486,8 +1484,9 @@ ${seq ? `<h3>The sequence</h3><div class="card"><ul class="list">${seq.lessons.m
   <span class="chip ${e.lessonId ? 'g' : ''}">${e.lessonId ? (S.lessons[e.lessonId]?.status === 'done' ? 'Done' : 'Ready') : e.status === 'deleted' ? 'Removed' : 'Writing…'}</span></li>`).join('')}</ul></div>` : ''}`;
 };
 A.startLesson = id => {
-  S.todayLessonId = id; logAssign(id);
-  if (S.attempt && S.attempt.mode === 'lesson' && S.attempt.lessonId !== id) S.attempt = null;
+  if (S.attempt && S.attempt.mode === 'lesson' && S.attempt.lessonId !== id) { if (!confirm(kidName() + ' is part-way through another lesson. Switch? Her progress on it will be cleared.')) return; S.attempt = null; }
+  if (!inWeek(id) || slotDone(id)) addToWeek(id, true);
+  S.todayLessonId = id;
   save(); role = 'kid'; go('kidHome'); toast('Ready for ' + kidName() + '! 🎉');
 };
 A.addFun = async (id, el) => {
@@ -1503,6 +1502,7 @@ A.deleteLesson = id => {
   const L = S.lessons[id]; if (!L || !confirm('Delete “' + L.meta.title + '”?')) return;
   delete S.lessons[id]; S.order = S.order.filter(x => x !== id);
   if (S.todayLessonId === id) S.todayLessonId = null;
+  if (S.week) { S.week.core = S.week.core.filter(x => x !== id); S.week.bonus = S.week.bonus.filter(x => x !== id); }
   if (S.attempt && S.attempt.lessonId === id) S.attempt = null;
   Object.values(S.sequences).forEach(seq => seq.lessons.forEach(e => { if (e.lessonId === id) { e.lessonId = null; e.status = 'deleted'; } }));
   save(); go('momHome');
@@ -1595,39 +1595,100 @@ function weekList(n = 4) {
 function weeksFilled() { const by = {}; S.results.filter(countsForWeek).forEach(r => { const k = weekStart(r.at); by[k] = (by[k] || 0) + 1; }); return Object.values(by).filter(c => c >= CONFIG.WEEK_GOAL).length; }
 const daysLeftInWeek = () => 7 - (new Date().getDay() + 6) % 7;
 function weekSlots(w, big = true) {
-  const G = CONFIG.WEEK_GOAL, B = CONFIG.WEEK_BONUS, n = w.count;
+  const G = CONFIG.WEEK_GOAL, n = w.count, B = Math.min(CONFIG.WEEK_BONUS, Math.max(S.week && w.current !== false ? S.week.bonus.length : 0, n - G));
   let h = '';
   for (let i = 0; i < G; i++) { const r = w.counted[i]; h += `<span class="slot${i < n ? ' on' : i === n ? ' next' : ''}">${i < n ? (SUBJECTS[r.subject]?.emoji || '⭐') : ''}</span>`; }
-  if (n >= G) { h += '<span class="plus">BONUS</span>'; for (let i = 0; i < B; i++) h += `<span class="slot bonus${i < n - G ? ' on' : i === n - G ? ' next' : ''}">${i < n - G ? '⭐' : ''}</span>`; }
+  if (n >= G && B > 0) { h += '<span class="plus">BONUS</span>'; for (let i = 0; i < B; i++) h += `<span class="slot bonus${i < n - G ? ' on' : i === n - G ? ' next' : ''}">${i < n - G ? '⭐' : ''}</span>`; }
   return `<div class="slots"${big ? '' : ' style="justify-content:center"'}>${h}</div>`;
 }
-function weekLead(n) {
+function weekLead(n, nb = 0) {
   const G = CONFIG.WEEK_GOAL, B = CONFIG.WEEK_BONUS;
   if (n === 0) return `A fresh week! Fill your ${G} stars.`;
   if (n < G - 1) return `${n} filled. ${G - n} to go!`;
   if (n === G - 1) return 'Just 1 more to fill your week!';
-  if (n === G) return 'You filled your week! 🎉 Want a bonus star?';
-  if (n < G + B) return `Bonus star! ${G + B - n} more for a super week.`;
+  if (n === G) return nb ? 'You did your 3! 🎉 Bonus lessons are open: double points!' : 'You did your 3! 🎉 Week complete.';
+  if (n < G + B) return `Bonus star! ${G + B - n > 0 && nb > n - G ? 'Another bonus is waiting.' : 'Super effort this week!'}`;
   return 'Super week! 🌟 You can rest or keep exploring.';
 }
-const readyForKid = () => S.order.map(id => S.lessons[id]).filter(L => L && lessonInfo(L).group === 'ready' && L.id !== S.todayLessonId);
-function kidWeekCard() {
-  const W = weekList(4), cur = W[3], G = CONFIG.WEEK_GOAL, filled = weeksFilled();
-  const canPick = cur.count >= G && !S.todayLessonId && !(S.attempt && S.attempt.mode === 'lesson') && readyForKid().length;
-  return `<div class="card wk${cur.count >= G ? ' full' : ''}"><div class="row"><h2 style="flex:1 1 0;text-align:left">My week</h2>${filled ? `<span class="chip p">🏆 ${filled} week${filled === 1 ? '' : 's'} filled</span>` : ''}</div>
-  <p class="lead">${weekLead(cur.count)}</p>${weekSlots(cur)}
-  ${canPick ? `<button class="big secondary" style="margin-bottom:0" data-a="go" data-v="kidPick">⭐ Pick a bonus lesson</button>` : ''}
-  ${S.results.length ? `<div class="stamps">${W.map(w => { const hit = w.count >= G; return `<div class="stamp${hit ? ' hit' : ''}"><b>${hit ? '⭐' : w.count || '–'}</b><small>${esc(w.label)}${hit ? `<br>${w.count} lessons` : ''}</small></div>`; }).join('')}</div>` : ''}</div>`;
+/* Week plan: Mom picks up to 3 core + 2 bonus lessons for Mon-Sun. Aanya does the 3 in any order; bonus unlocks after 3. */
+const weekStartMs = st => new Date(st + 'T00:00:00').getTime();
+function ensureWeek() {
+  const cur = weekStart(Date.now()), W = S.week;
+  if (W && W.start === cur) return W;
+  if (W) { // close last week's plan: unfinished lessons simply stay in Ready
+    if (W.brk && !S.breaks.includes(W.start)) S.breaks.push(W.start);
+    const left = [...W.core, ...W.bonus].filter(id => S.lessons[id] && !slotDone(id, W.start)).length;
+    S.weekLeft = left ? { start: W.start, n: left } : null;
+    if (S.attempt && S.attempt.mode === 'lesson' && !S.lessons[S.attempt.lessonId]) S.attempt = null;
+  }
+  const carry = !W && S.todayLessonId && S.lessons[S.todayLessonId] && !S.results.some(r => r.lessonId === S.todayLessonId && r.at > ((S.assignLog || []).filter(x => x.id === S.todayLessonId).pop() || { at: 0 }).at) ? S.todayLessonId : null; // first run after the update: keep the lesson Mom had assigned
+  S.week = { start: cur, core: carry ? [carry] : [], bonus: [], brk: false };
+  S.todayLessonId = S.attempt && S.attempt.mode === 'lesson' ? S.attempt.lessonId : null;
+  save(); return S.week;
 }
-VIEWS.kidPick = () => {
-  const list = readyForKid().slice(0, 4);
-  return `<div class="topbar"><button data-a="go" data-v="kidHome">← Back</button><span class="who">⭐ Bonus lesson</span><span></span></div>
-<p>You filled your week! Pick any one you like.</p>
-${list.length ? list.map(L => `<button class="card" style="display:block;width:100%;text-align:left" data-a="kidPick" data-v="${L.id}"><div style="font-size:30px">${SUBJECTS[L.meta.subject]?.emoji || '⭐'}</div><h2>${esc(L.meta.title)}</h2><span class="muted">${esc(SUBJECTS[L.meta.subject]?.label || '')}</span></button>`).join('') : '<div class="card"><p class="muted">No lessons waiting right now. Ask Mom!</p></div>'}`;
+const slotDone = (id, start = S.week.start) => S.results.some(r => r.lessonId === id && r.at >= weekStartMs(start) && countsForWeek(r));
+const inWeek = id => !!id && !!S.week && (S.week.core.includes(id) || S.week.bonus.includes(id));
+const isBreak = start => (S.week && S.week.start === start) ? S.week.brk : S.breaks.includes(start);
+const bonusOpen = () => weekList(1)[0].count >= CONFIG.WEEK_GOAL;
+function addToWeek(id, quiet) {
+  const W = ensureWeek(), L = S.lessons[id]; if (!L) return false;
+  if (inWeek(id) && !slotDone(id)) { if (!quiet) toast('Already in this week’s plan.'); return true; }
+  if (inWeek(id)) { W.core = W.core.filter(x => x !== id); W.bonus = W.bonus.filter(x => x !== id); } // done earlier this week, doing it again
+  if (W.core.length < CONFIG.WEEK_GOAL) W.core.push(id);
+  else if (W.bonus.length < CONFIG.WEEK_BONUS) W.bonus.push(id);
+  else { if (!quiet) toast(`This week is full (${CONFIG.WEEK_GOAL} + ${CONFIG.WEEK_BONUS} bonus). Remove one first.`); return false; }
+  logAssign(id); save();
+  if (!quiet) toast(`Added to this week: ${L.meta.title}${W.core.includes(id) ? '' : ' (bonus)'}`);
+  return true;
+}
+A.weekRemove = id => {
+  const W = ensureWeek(), L = S.lessons[id];
+  if (S.attempt && S.attempt.mode === 'lesson' && S.attempt.lessonId === id) { if (!confirm(kidName() + ' is part-way through this lesson. Remove it? Her progress on it will be cleared.')) return; S.attempt = null; }
+  W.core = W.core.filter(x => x !== id); W.bonus = W.bonus.filter(x => x !== id);
+  if (S.todayLessonId === id) S.todayLessonId = null;
+  save(); toast('Removed' + (L ? ': ' + L.meta.title : '') + '. It’s back in Ready.'); render();
 };
-A.kidPick = id => {
-  const L = S.lessons[id]; if (!L || S.todayLessonId || weekList(1)[0].count < CONFIG.WEEK_GOAL) { go('kidHome'); return; }
-  S.todayLessonId = id; logAssign(id); (S.assignLog[S.assignLog.length - 1] || {}).byKid = true; save(); go('kidHome');
+A.weekBreak = () => { const W = ensureWeek(); W.brk = !W.brk; save(); toast(W.brk ? 'Marked as a break week. It won’t count against the goal.' : 'Break week removed.'); render(); };
+A.weekLeftOk = () => { S.weekLeft = null; save(); render(); };
+function momPlanCard() {
+  const W = ensureWeek(), G = CONFIG.WEEK_GOAL, a = S.attempt;
+  const row = (id, label, bonus) => {
+    const L = id && S.lessons[id];
+    if (!L) return `<li class="item"><span class="num">${label}</span><div class="grow"><div class="t muted">Empty</div><div class="s">${bonus ? 'Optional · double points, unlocks after the 3' : 'Add one from Lessons'}</div></div></li>`;
+    const d = slotDone(id), prog = a && a.mode === 'lesson' && a.lessonId === id;
+    return `<li class="item"><span class="num ${d ? 'ok' : ''}">${d ? '✓' : label}</span><div class="grow"><div class="t">${SUBJECTS[L.meta.subject]?.emoji || ''} ${esc(L.meta.title)}</div><div class="s">${d ? 'Done this week' : prog ? 'In progress' : bonus ? 'Bonus · double points' : 'Not done yet'} · ~${estMinutes(L)} min</div></div>${d ? '<span class="chip g">Done</span>' : `<button class="sm" data-a="weekRemove" data-v="${id}" aria-label="Remove">✕</button>`}</li>`;
+  };
+  const core = [...Array(G)].map((_, i) => row(W.core[i], i + 1, false)).join('');
+  const bonus = [...Array(CONFIG.WEEK_BONUS)].map((_, i) => row(W.bonus[i], 'B' + (i + 1), true)).join('');
+  const need = G - W.core.length;
+  return `<div class="card"><div class="row"><h2 style="flex:1 1 0;margin:0;text-align:left">This week’s lessons</h2>${W.brk ? '<span class="chip">🌴 Break week</span>' : `<span class="chip ${weekList(1)[0].count >= G ? 'g' : ''}">${weekList(1)[0].count} done · goal ${G}</span>`}</div>
+  <p class="muted"><small>Week of ${esc(fmtDate(new Date(W.start + 'T12:00:00')))}. ${esc(kidName())} can do the ${G} in any order. Bonus lessons unlock after that and earn ${CONFIG.BONUS_MULT}× points.</small></p>
+  ${S.weekLeft ? `<div class="strip" data-a="weekLeftOk"><span>Last week: ${S.weekLeft.n} lesson${S.weekLeft.n === 1 ? '' : 's'} not done. ${S.weekLeft.n === 1 ? 'It’s' : 'They’re'} back in Ready.</span><b>OK</b></div>` : ''}
+  <ul class="list">${core}</ul><h4 class="lh">Bonus</h4><ul class="list">${bonus}</ul>
+  <div class="row" style="margin-top:12px">${need > 0 || W.bonus.length < CONFIG.WEEK_BONUS ? `<button class="ghost" data-a="go" data-v="lessons">＋ Add from Lessons</button>` : ''}<button class="ghost" data-a="weekBreak">${W.brk ? 'Undo break week' : '🌴 Break week (sick / holiday)'}</button></div></div>`;
+}
+function kidWeekCard() {
+  const W = ensureWeek(), wk = weekList(4), cur = wk[3], G = CONFIG.WEEK_GOAL, filled = weeksFilled(), open = bonusOpen(), a = S.attempt;
+  const busy = a && a.mode === 'lesson' && S.lessons[a.lessonId] ? a.lessonId : null;
+  const row = (id, i, bonus) => {
+    const L = S.lessons[id]; if (!L) return '';
+    const d = slotDone(id), locked = bonus && !open;
+    const btn = d ? '<span class="chip g">Done ✓</span>' : locked ? '<span class="chip">🔒</span>' : busy === id ? `<button class="sm" data-a="resumePlay">Keep going</button>` : busy ? '' : `<button class="sm" data-a="kidStart" data-v="${id}">Start</button>`;
+    return `<li class="item${locked ? ' locked' : ''}"><span class="slot sm${d ? ' on' : ''}${bonus ? ' bonus' : ''}">${d ? (bonus ? '⭐' : SUBJECTS[L.meta.subject]?.emoji || '⭐') : locked ? '🔒' : bonus ? '⭐' : i + 1}</span><div class="grow"><div class="t">${esc(L.meta.title)}</div><div class="s">${esc(SUBJECTS[L.meta.subject]?.label || '')}${bonus ? ` · ${CONFIG.BONUS_MULT}× points` : ''}</div></div>${btn}</li>`;
+  };
+  const lead = W.brk ? 'Break week 🌴 Rest up! Any lesson still earns points.' : weekLead(cur.count, W.bonus.length);
+  return `<div class="card wk${cur.count >= G && !W.brk ? ' full' : ''}"><div class="row"><h2 style="flex:1 1 0;text-align:left">My week</h2>${filled ? `<span class="chip p">🏆 ${filled} week${filled === 1 ? '' : 's'} filled</span>` : ''}</div>
+  <p class="lead">${lead}</p>${W.brk ? '' : weekSlots(cur)}
+  ${W.core.length ? `<ul class="list" style="margin-top:10px">${W.core.map((id, i) => row(id, i, false)).join('')}</ul>` : `<p class="muted" style="margin-top:12px">Mom hasn’t picked this week’s lessons yet.</p>`}
+  ${W.bonus.length ? `<h4 class="lh">${open ? 'Bonus lessons · double points!' : `Bonus lessons · unlock after your ${G}`}</h4><ul class="list">${W.bonus.map((id, i) => row(id, i, true)).join('')}</ul>` : ''}
+  ${busy && !inWeek(busy) ? `<button class="big primary" data-a="resumePlay">Keep going: ${esc(S.lessons[busy].meta.title)}</button>` : ''}
+  ${S.results.length || S.breaks.length ? `<div class="stamps">${wk.map(w => { const hit = w.count >= G, br = isBreak(w.start); return `<div class="stamp${hit ? ' hit' : ''}"><b>${hit ? '⭐' : br ? '🌴' : w.count || '–'}</b><small>${esc(w.label)}${hit ? `<br>${w.count} lessons` : br ? '<br>break' : ''}</small></div>`; }).join('')}</div>` : ''}</div>`;
+}
+A.kidStart = id => {
+  const a = S.attempt;
+  if (a && a.mode === 'lesson' && S.lessons[a.lessonId] && a.lessonId !== id) { toast('Finish the lesson you started first.'); return; }
+  if (!inWeek(id) || slotDone(id) || (S.week.bonus.includes(id) && !bonusOpen())) { render(); return; }
+  S.todayLessonId = id; A.startPlay();
 };
 function weekChart(W) {
   const G = CONFIG.WEEK_GOAL, top = Math.max(G + 2, ...W.map(w => w.count)), y0 = 150, h = 112, sy = v => y0 - h * v / top, bw = 46;
@@ -1637,15 +1698,15 @@ function weekChart(W) {
   ${W.map((w, i) => { const cx = 55 + i * 92, bh = Math.max(w.count ? 4 : 0, h * w.count / top), y = y0 - bh;
     return `<g><title>${esc(w.label)}: ${w.count} lesson${w.count === 1 ? '' : 's'}${w.mastery != null ? ', average ' + w.mastery + '%' : ''}, ${w.minutes} min</title>
     ${w.count ? `<path class="bar${w.current ? ' cur' : ''}" d="M${cx - bw / 2} ${y0}V${y + 4}q0-4 4-4h${bw - 8}q4 0 4 4V${y0}z"/>` : ''}
-    <text class="v" x="${cx}" y="${y - 8}" text-anchor="middle">${w.count}</text><text x="${cx}" y="172" text-anchor="middle">${esc(w.label)}</text></g>`; }).join('')}</svg>`;
+    <text class="v" x="${cx}" y="${y - 8}" text-anchor="middle">${w.count}</text><text x="${cx}" y="172" text-anchor="middle">${esc(w.label)}</text>${isBreak(w.start) ? `<text x="${cx}" y="${y0 - 10}" text-anchor="middle">🌴 break</text>` : ''}</g>`; }).join('')}</svg>`;
 }
 function momWeekCard(detail) {
   const W = weekList(4), cur = W[3], G = CONFIG.WEEK_GOAL, left = daysLeftInWeek();
-  const status = cur.count >= G ? `Goal met this week (${cur.count} of ${G}).` : `${cur.count} of ${G} this week, ${left} day${left === 1 ? '' : 's'} left including today.`;
+  const status = isBreak(cur.start) ? 'Break week: it doesn’t count against the goal.' : cur.count >= G ? `Goal met this week (${cur.count} of ${G}).` : `${cur.count} of ${G} this week, ${left} day${left === 1 ? '' : 's'} left including today.`;
   const short = W.reduce((t, w) => t + w.short, 0);
   return `<div class="card"><div class="row"><h2 style="flex:1 1 0;margin:0;text-align:left">Lessons per week</h2><span class="chip ${cur.count >= G ? 'g' : ''}">${cur.count} / ${G}</span></div>
   <p class="muted" style="margin-bottom:4px"><small>${status}</small></p>${weekChart(W)}
-  ${detail ? `<table class="wktable"><tr><th>Week of</th><th>Lessons</th><th>Avg mastery</th><th>Minutes</th></tr>${W.map(w => `<tr><td>${esc(fmtDate(new Date(w.start + 'T12:00:00')))}${w.current ? ' (now)' : ''}</td><td>${w.count}${w.count >= G ? ' ✓' : ''}</td><td>${w.mastery == null ? '–' : w.mastery + '%'}</td><td>${w.minutes}</td></tr>`).join('')}</table>
+  ${detail ? `<table class="wktable"><tr><th>Week of</th><th>Lessons</th><th>Avg mastery</th><th>Minutes</th></tr>${W.map(w => `<tr><td>${esc(fmtDate(new Date(w.start + 'T12:00:00')))}${w.current ? ' (now)' : ''}</td><td>${w.count}${w.count >= G ? ' ✓' : isBreak(w.start) ? ' 🌴' : ''}</td><td>${w.mastery == null ? '–' : w.mastery + '%'}</td><td>${w.minutes}</td></tr>`).join('')}</table>
   <p class="muted"><small>Weeks run Monday to Sunday. A finished lesson counts when she spent at least ${CONFIG.WEEK_MIN_MINUTES} minutes on it; mistake reviews don’t count. Mastery is the help-free check score.${short ? ` ${short} very short lesson${short === 1 ? '' : 's'} in these weeks didn’t count.` : ''}</small></p>` : ''}</div>`;
 }
 const activeGoal = () => S.goals.find(g => !g.done);
@@ -1656,22 +1717,15 @@ function goalCard(compact) {
   <div class="bar"><i style="width:${pct}%"></i></div>${compact ? '' : `<p class="muted" style="margin:0">${pct >= 100 ? 'You did it! Ask Mom. 🎉' : `${Math.ceil((g.price - have) * (S.settings.rate || 100))} more points to go`}</p>`}</div>`;
 }
 VIEWS.kidHome = () => {
-  const L = S.lessons[S.todayLessonId];
   const a = S.attempt;
-  const resumeLesson = a && a.mode === 'lesson' && L && a.lessonId === L.id;
   const resumeReview = a && a.mode === 'review';
   const due = dueReviews().length;
-  const part = L && L.meta.sequenceTotal > 1 ? ` · Part ${L.meta.sequencePosition} of ${L.meta.sequenceTotal}` : '';
   const hr = new Date().getHours(), hi = hr < 12 ? 'Good morning' : hr < 17 ? 'Hi' : 'Good evening';
+  const rate = S.settings.rate || 100;
   return `
 <div class="hello"><h1>${hi}, ${esc(kidName())}!</h1><span class="row" style="flex:0 0 auto;gap:8px"><button data-a="toggleSound" aria-label="Sound">${S.settings.sound === false ? '🔇' : '🔊'}</button><button data-a="switchUser">Switch</button></span></div>
-<div class="pills"><span class="pill">${ICON.star}${S.points.balance}<small>points</small></span></div>
+<div class="pills"><span class="pill">${ICON.star}${S.points.balance}<small>points${CONFIG.SHOW_MONEY ? ' · worth ' + money(S.points.balance / rate) : ''}</small></span></div>
 ${CONFIG.SHOW_MONEY ? goalCard() : ''}
-${L ? `<div class="hero s-${esc(L.meta.subject)}"><span class="mark">${SUBJECTS[L.meta.subject]?.emoji || '⭐'}</span>
-  <div class="eyebrow">Today’s lesson${part}</div><h1>${esc(L.meta.title)}</h1>
-  <p>Grab a pencil and paper.</p>
-  <button class="go" data-a="${resumeLesson ? 'resumePlay' : 'startPlay'}">${ICON.play}${resumeLesson ? 'Keep going' : 'Let’s go'}</button></div>`
-  : `<div class="card"><h2>No lesson right now</h2><p class="muted">${S.results.length ? 'Great work! Ask Mom for the next one.' : 'Ask Mom to start one.'}</p></div>`}
 ${kidWeekCard()}
 ${kidJourney()}
 ${resumeReview ? `<button class="big secondary" data-a="resumePlay">Finish your review</button>` : ''}
@@ -2208,7 +2262,9 @@ function finishAttempt() {
   const chkRight = chk.filter(x => x.correct).length;
   const chkFree = chk.filter(x => !x.helped), basis = chkFree.length ? chkFree : chk, basisRight = basis.filter(x => x.correct).length;
   const perfect = chk.length > 0 && chkRight === chk.length;
-  const bd = [['Lesson complete', L.reward?.pointsBase || CONFIG.POINTS.lessonBase]];
+  const base = L.reward?.pointsBase || CONFIG.POINTS.lessonBase, mins = Math.max(1, Math.round(a.active / 60000));
+  const isBonus = S.week && S.week.bonus.includes(L.id) && !slotDone(L.id) && bonusOpen() && mins >= CONFIG.WEEK_MIN_MINUTES;
+  const bd = [isBonus ? [`Bonus lesson ×${CONFIG.BONUS_MULT}`, base * CONFIG.BONUS_MULT] : ['Lesson complete', base]];
   if (a.pts) bd.push(['Correct answers', a.pts]);
   if (a.ptsPencil) bd.push(['Pencil work', a.ptsPencil]);
   if (perfect) bd.push(['Perfect check!', CONFIG.POINTS.perfectCheck]);
@@ -2217,7 +2273,7 @@ function finishAttempt() {
   addPoints(total, 'Lesson: ' + L.meta.title);
   const r = {
     id: uid(), lessonId: L.id, title: L.meta.title, subject: L.meta.subject, at: Date.now(),
-    minutes: Math.max(1, Math.round(a.active / 60000)),
+    minutes: mins, bonus: !!isBonus,
     mastery: basis.length ? Math.round(100 * basisRight / basis.length) : 0, masteryRight: basisRight, masteryTotal: basis.length, helpedCount: chk.length - chkFree.length, allHelped: chk.length > 0 && !chkFree.length, checkRight: chkRight, checkTotal: chk.length,
     causes: scored.reduce((m, x) => { if (!x.correct && x.cause) m[x.cause] = (m[x.cause] || 0) + 1; return m; }, {}),
     practiceRight: prac.filter(x => x.correct).length, practiceTotal: prac.length, maxTier: a.maxTier,
@@ -2234,7 +2290,7 @@ function finishAttempt() {
   sfx('win');
   L.status = 'done';
   const nx = nextInSequence(L);
-  S.todayLessonId = nx && nx.lesson ? nx.lesson.id : null; if (S.todayLessonId) logAssign(S.todayLessonId);
+  S.todayLessonId = null; if (nx && nx.lesson && S.week.core.length < CONFIG.WEEK_GOAL) addToWeek(nx.lesson.id, true);
   S.attempt = null; save();
   go('reward', { rid: r.id });
 }
@@ -2262,11 +2318,11 @@ VIEWS.reward = ({ rid }) => {
   <h1>Lesson complete!</h1>
   <p class="big-points">+${r.points} points</p>
   <ul class="breakdown">${r.breakdown.map(([k, v]) => `<li><span>${esc(k)}</span><b>+${v}</b></li>`).join('')}</ul>
-  ${(() => { const w = weekList(1)[0], G = CONFIG.WEEK_GOAL; const msg = !countsForWeek(r) ? `Lessons count toward your week when you spend at least ${CONFIG.WEEK_MIN_MINUTES} minutes on them.` : w.count === G ? 'You filled your week! 🎉' : w.count < G ? `${G - w.count} more to fill your week!` : w.count <= G + CONFIG.WEEK_BONUS ? 'Bonus star! ⭐' : 'Super week! 🌟'; return `<div class="card wk${w.count >= G ? ' full' : ''}" style="text-align:center"><p class="lead" style="margin-top:0">${msg}</p>${weekSlots(w, false)}</div>`; })()}
+  ${(() => { const w = weekList(1)[0], G = CONFIG.WEEK_GOAL; const msg = !countsForWeek(r) ? `Lessons count toward your week when you spend at least ${CONFIG.WEEK_MIN_MINUTES} minutes on them.` : w.count === G ? (S.week.bonus.length ? 'You did your 3! 🎉 Bonus lessons are open: double points!' : 'You did your 3! 🎉 Week complete.') : w.count < G ? `${G - w.count} more to fill your week!` : r.bonus ? `Bonus star! ⭐ ${CONFIG.BONUS_MULT}× points!` : w.count <= G + CONFIG.WEEK_BONUS ? 'Bonus star! ⭐' : 'Super week! 🌟'; return `<div class="card wk${w.count >= G ? ' full' : ''}" style="text-align:center"><p class="lead" style="margin-top:0">${msg}</p>${weekSlots(w, false)}</div>`; })()}
   <div class="stats"><div class="stat"><span style="font-size:26px;line-height:30px">🗓️</span><b>${weekList(1)[0].count}/${CONFIG.WEEK_GOAL}</b><span>this week</span></div><div class="stat">${ICON.star.replace('<svg','<svg width="30" height="30"')}<b>${S.points.balance}</b><span>points</span></div><div class="stat"><span style="font-size:26px;line-height:30px">✅</span><b>${r.checkRight}/${r.checkTotal}</b><span>on the check</span></div></div>
   ${goalCard(true)}
   ${toReview ? `<button class="big secondary" data-a="startReview" data-v="${r.lessonId}">🔁 Review your mistakes (${toReview})</button>` : ''}
-  ${nx ? (nx.lesson ? `<div class="card"><b>Up next:</b> ${esc(nx.lesson.meta.title)}<br><span class="muted">It’s ready for next time.</span></div>` : `<div class="card"><b>Up next:</b> ${esc(nx.entry.title)}<br><span class="muted">Being written. It’ll be ready soon.</span></div>`) : ''}
+  ${nx ? (nx.lesson ? `<div class="card"><b>Up next:</b> ${esc(nx.lesson.meta.title)}<br><span class="muted">${inWeek(nx.lesson.id) ? 'It’s in your week.' : 'Mom can add it to your week.'}</span></div>` : `<div class="card"><b>Up next:</b> ${esc(nx.entry.title)}<br><span class="muted">Being written. It’ll be ready soon.</span></div>`) : ''}
   <button class="big ghost" data-a="go" data-v="kidHome">Home</button>
 </div>`;
 };
@@ -2340,7 +2396,9 @@ VIEWS.rewards = () => {
   return `
 <div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Rewards</span><span></span></div>
 <div class="card"><h2>${esc(kidName())} has ${S.points.balance} points</h2><p class="muted">That’s ${money(S.points.balance / rate)} at ${rate} points per $1.</p>
-<label>Points per $1</label><div class="row"><input type="number" inputmode="numeric" min="1" id="rateIn" value="${rate}"><button class="ghost" style="flex:0" data-a="saveRate">Save</button></div></div>
+<label>Points per $1</label><div class="row"><input type="number" inputmode="numeric" min="1" id="rateIn" value="${rate}"><button class="ghost" style="flex:0" data-a="saveRate">Save</button></div>
+<p class="muted"><small>At this rate a finished lesson is worth about ${money(CONFIG.POINTS.lessonBase / rate)} plus answer points, and a bonus lesson about ${money(CONFIG.POINTS.lessonBase * CONFIG.BONUS_MULT / rate)}. ${esc(kidName())} sees her points in dollars.</small></p>
+<label>Pay out (she spent points on something)</label><div class="row"><input type="number" inputmode="decimal" min="0" step="0.01" id="payIn" placeholder="$ amount"><button class="ghost" style="flex:0" data-a="payOut">Take points</button></div></div>
 <h3>Goals (what she’s saving for)</h3>
 <div class="card">${S.goals.length ? `<ul class="list">${S.goals.map(g => `<li class="item"><div class="grow"><div class="t">${esc(g.name)} ${g.done ? '✓' : ''}</div><div class="s">${money(g.price)} = ${Math.round(g.price * rate)} points</div></div>
   ${g.done ? '<span class="chip g">Got it</span>' : `<button class="sm" data-a="goalBought" data-v="${g.id}">Bought it</button>`}<button class="sm" data-a="goalDel" data-v="${g.id}">✕</button></li>`).join('')}</ul>` : '<p class="muted">No goals yet. Add a toy or treat she wants.</p>'}
@@ -2350,7 +2408,14 @@ VIEWS.rewards = () => {
 <div class="card">${S.redeemables.length ? `<ul class="list">${S.redeemables.map(r => `<li class="item"><div class="grow t">${esc(r.name)}</div><span class="chip">${r.points} pts</span><button class="sm" data-a="redeem" data-v="${r.id}">Redeem</button><button class="sm" data-a="redeemDel" data-v="${r.id}">✕</button></li>`).join('')}</ul>` : '<p class="muted">e.g. “30 min screen time”, “Pick dinner”.</p>'}
   <div class="row" style="margin-top:10px"><input data-bind="RW:rname" placeholder="Reward" value="${esc(FORMS.RW.rname)}"><input data-bind="RW:rpts" type="number" inputmode="numeric" placeholder="Points" style="max-width:120px" value="${esc(FORMS.RW.rpts)}"><button class="ghost" style="flex:0" data-a="redeemAdd">Add</button></div></div>
 <h3>How points are earned</h3>
-<div class="card kv"><span>Finish a lesson</span><b>${CONFIG.POINTS.lessonBase}</b><span>Each correct answer</span><b>${CONFIG.POINTS.perCorrect}</b><span>Perfect check</span><b>${CONFIG.POINTS.perfectCheck}</b></div>`;
+<div class="card kv"><span>Finish a lesson</span><b>${CONFIG.POINTS.lessonBase}</b><span>Each correct answer</span><b>${CONFIG.POINTS.perCorrect}</b><span>Perfect check</span><b>${CONFIG.POINTS.perfectCheck}</b><span>Bonus lesson (after the ${CONFIG.WEEK_GOAL})</span><b>${CONFIG.POINTS.lessonBase * CONFIG.BONUS_MULT}</b></div>`;
+};
+A.payOut = () => {
+  const d = +$('#payIn').value, rate = S.settings.rate || 100, pts = Math.round(d * rate);
+  if (!(d > 0)) { toast('Type a dollar amount.'); return; }
+  if (pts > S.points.balance) { toast(`She has ${money(S.points.balance / rate)} (${S.points.balance} points).`); return; }
+  if (!confirm(`Take ${pts} points (${money(d)}) from ${kidName()}?`)) return;
+  addPoints(-pts, 'Paid out ' + money(d)); save(); toast('Done. ' + S.points.balance + ' points left.'); render();
 };
 A.saveRate = () => { const v = Math.round(+$('#rateIn').value); if (v >= 1) { S.settings.rate = v; save(); toast('Saved.'); render(); } };
 A.goalAdd = () => { const n = str(FORMS.RW.goal), p = +FORMS.RW.price; if (!n || !(p > 0)) { toast('Add a name and a price.'); return; } S.goals.push({ id: uid(), name: n, price: Math.round(p * 100) / 100, done: false }); FORMS.RW.goal = ''; FORMS.RW.price = ''; save(); render(); };
