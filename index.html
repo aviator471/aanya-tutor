@@ -162,6 +162,21 @@ label{display:block;font-weight:600;margin:16px 0 6px}
 .stat b{display:block;font-size:28px;letter-spacing:-.02em}
 .stat span{display:block;font-size:13px;color:var(--muted);font-weight:600}
 .pills{display:flex;gap:10px;flex-wrap:wrap}
+.wk{position:relative;overflow:hidden}.wk h2{margin:0}.wk .lead{margin:2px 0 14px;color:var(--muted);font-weight:600}
+.slots{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+.slot{display:grid;place-items:center;width:64px;height:64px;border-radius:50%;border:3px dashed var(--line);background:var(--fill);font-size:30px;transition:transform .3s}
+.slot.on{border:0;background:linear-gradient(135deg,#FFD84D,#FF9F0A);box-shadow:0 6px 16px rgba(255,159,10,.35)}
+.slot.bonus{width:50px;height:50px;font-size:24px}.slot.bonus.on{background:linear-gradient(135deg,var(--primary),var(--primary2));box-shadow:0 6px 16px rgba(91,91,240,.35)}
+.slot.next{border-color:var(--accent);animation:pulse 1.6s ease-in-out infinite}
+@keyframes pulse{50%{transform:scale(1.07)}}
+.slots .plus{color:var(--muted);font-weight:800;font-size:14px;font-family:var(--rounded)}
+.wk.full{background:linear-gradient(135deg,var(--accent-soft),var(--card) 70%)}
+.stamps{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;text-align:center;margin-top:18px;padding-top:14px;border-top:1px solid var(--line)}
+.stamp b{display:grid;place-items:center;margin:0 auto 4px;width:44px;height:44px;border-radius:50%;background:var(--fill);font-family:var(--rounded);font-size:18px}
+.stamp.hit b{background:linear-gradient(135deg,#FFD84D,#FF9F0A);color:#5A3B00}.stamp small{color:var(--muted);font-size:12px;display:block;line-height:1.2}
+.wkchart{width:100%;height:auto;display:block}.wkchart text{font-family:var(--rounded);fill:var(--muted);font-size:13px}.wkchart .v{fill:var(--ink);font-weight:800;font-size:16px}
+.wkchart .bar{fill:var(--primary)}.wkchart .bar.cur{fill:var(--primary2);opacity:.55}.wkchart .goal{stroke:var(--accent);stroke-width:2;stroke-dasharray:5 5}.wkchart .base{stroke:var(--line);stroke-width:1}
+.wktable{width:100%;border-collapse:collapse;font-size:15px;margin-top:10px}.wktable th{font-weight:650;color:var(--muted);text-align:left;font-size:13px}.wktable td,.wktable th{padding:6px 4px;border-top:1px solid var(--line)}.wktable td:not(:first-child),.wktable th:not(:first-child){text-align:right}
 .pill{display:inline-flex;align-items:center;gap:8px;background:var(--card);border-radius:999px;padding:9px 16px 9px 12px;box-shadow:var(--shadow);font-weight:750;font-family:var(--rounded);font-size:18px}
 .pill svg{width:22px;height:22px}
 .pill small{font-weight:600;color:var(--muted);font-size:13px}
@@ -312,7 +327,10 @@ const CONFIG = {
   DEFAULT_RATE: 100,             // points per $1 (Mom can change this in Rewards)
   STORAGE_KEY: 'g5tutor.v1',
   SHOW_MONEY: false,             // learner screens: show dollars earned + goal progress (parked for now; points still show)
-  VERSION: 'v14 · 13 Nov',        // shown on the first screen so you can tell which copy you are running
+  WEEK_GOAL: 3,                  // lessons per week (Mon-Sun, iPad time)
+  WEEK_MIN_MINUTES: 8,           // a finished lesson counts toward the week only with at least this much real work
+  WEEK_BONUS: 2,                 // bonus stars after the goal (so 3 + 2 = a "super week"); nothing extra beyond that
+  VERSION: 'v15 · 15 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -929,6 +947,7 @@ VIEWS.report = () => {
 <div class="topbar"><span class="who">Report</span><button class="noprint" data-a="printReport">Share / Print</button></div>
 <div class="hello" style="margin-bottom:6px"><div><h1>How ${esc(kidName())} is doing</h1><div class="muted"><small>${new Date().toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })} · last ${WIN_DAYS} days · written by the app from her scored lessons</small></div></div></div>
 <div class="card"><p style="margin:0;font-size:20px">${esc(overallLine(ds))}</p></div>
+${anyData ? momWeekCard(true) : ''}
 ${planCard()}
 ${!S.plan && anyData ? `<button class="big primary noprint" data-a="planBuild" data-v="all">Build a catch-up plan</button><p class="muted noprint"><small>Makes about 4 small lessons (15–20 min each) from her weak spots. It’s free to build.</small></p>` : ''}
 ${ds.map(card).join('')}
@@ -966,6 +985,7 @@ VIEWS.momHome = () => {
     pend.length ? [`${pend.length} result${pend.length > 1 ? 's' : ''} to check`, 'results', 'View'] : null,
     flags.length ? [`${flags.length} flagged question${flags.length > 1 ? 's' : ''}`, 'flags', 'View'] : null,
     needBackup ? ['Save a backup of her progress', 'exportData', 'Save'] : null,
+    (() => { const w = weekList(1)[0]; return w.count < CONFIG.WEEK_GOAL && !S.todayLessonId ? [`${kidName()} is at ${w.count} of ${CONFIG.WEEK_GOAL} this week and has no lesson assigned`, 'lessons', 'Assign'] : null; })(),
   ].filter(Boolean);
   const tile = k => { const x = subjStats(k); return `<button class="tile s-${k}" data-a="go" data-v="report">${ringSvg(x.total ? Math.max(x.covered / x.total, x.covered ? 0.06 : 0) : 0, '', SUBJECTS[k].emoji)}<div><b>${SUBJECTS[k].label}</b><span class="${x.mastery != null && x.mastery < REDO_BELOW ? 'low' : ''}">${x.mastery == null ? 'No score yet' : x.mastery + '% lately'}</span><small>${x.covered} of ${x.total} topics</small></div></button>`; };
   return `
@@ -973,6 +993,7 @@ VIEWS.momHome = () => {
 ${GEN && GEN.status === 'running' ? `<div class="strip" data-a="go" data-v="generating"><span>✏️ Writing a lesson…</span><b>See</b></div>` : ''}
 ${strip.map(x => `<div class="strip" data-a="${x[1] === 'exportData' ? 'exportData' : 'go'}" data-v="${x[1]}"><span>${esc(x[0])}</span><b>${x[2]}</b></div>`).join('')}
 ${homeHero()}
+${S.results.length ? momWeekCard(false) : ''}
 <div class="tiles">${Object.keys(SUBJECTS).map(tile).join('')}</div>
 <button class="big ghost" data-a="newLesson">＋ New lesson</button>`;
 };
@@ -1556,6 +1577,77 @@ A.edSave = () => {
    Learner home
    ================================================================== */
 const dueReviews = () => S.review.filter(r => r.due <= todayStr());
+/* ---------- Weekly goal (lessons per week, Mon-Sun on iPad time) ---------- */
+const weekStart = t => { const d = new Date(t); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return todayStr(d); };
+const countsForWeek = r => (r.minutes || 0) >= CONFIG.WEEK_MIN_MINUTES;
+function weekList(n = 4) {
+  const cur = weekStart(Date.now()), by = {};
+  S.results.forEach(r => { (by[weekStart(r.at)] = by[weekStart(r.at)] || []).push(r); });
+  const out = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const start = addDays(cur, -7 * i), all = (by[start] || []).slice().reverse(), ok = all.filter(countsForWeek), sc = ok.filter(r => r.masteryTotal > 0);
+    out.push({ start, current: i === 0, count: ok.length, counted: ok, short: all.length - ok.length,
+      mastery: sc.length ? Math.round(sc.reduce((t, r) => t + r.mastery, 0) / sc.length) : null, minutes: ok.reduce((t, r) => t + (r.minutes || 0), 0),
+      label: i === 0 ? 'This week' : i === 1 ? 'Last week' : fmtDate(new Date(start + 'T12:00:00')) });
+  }
+  return out;
+}
+function weeksFilled() { const by = {}; S.results.filter(countsForWeek).forEach(r => { const k = weekStart(r.at); by[k] = (by[k] || 0) + 1; }); return Object.values(by).filter(c => c >= CONFIG.WEEK_GOAL).length; }
+const daysLeftInWeek = () => 7 - (new Date().getDay() + 6) % 7;
+function weekSlots(w, big = true) {
+  const G = CONFIG.WEEK_GOAL, B = CONFIG.WEEK_BONUS, n = w.count;
+  let h = '';
+  for (let i = 0; i < G; i++) { const r = w.counted[i]; h += `<span class="slot${i < n ? ' on' : i === n ? ' next' : ''}">${i < n ? (SUBJECTS[r.subject]?.emoji || '⭐') : ''}</span>`; }
+  if (n >= G) { h += '<span class="plus">BONUS</span>'; for (let i = 0; i < B; i++) h += `<span class="slot bonus${i < n - G ? ' on' : i === n - G ? ' next' : ''}">${i < n - G ? '⭐' : ''}</span>`; }
+  return `<div class="slots"${big ? '' : ' style="justify-content:center"'}>${h}</div>`;
+}
+function weekLead(n) {
+  const G = CONFIG.WEEK_GOAL, B = CONFIG.WEEK_BONUS;
+  if (n === 0) return `A fresh week! Fill your ${G} stars.`;
+  if (n < G - 1) return `${n} filled. ${G - n} to go!`;
+  if (n === G - 1) return 'Just 1 more to fill your week!';
+  if (n === G) return 'You filled your week! 🎉 Want a bonus star?';
+  if (n < G + B) return `Bonus star! ${G + B - n} more for a super week.`;
+  return 'Super week! 🌟 You can rest or keep exploring.';
+}
+const readyForKid = () => S.order.map(id => S.lessons[id]).filter(L => L && lessonInfo(L).group === 'ready' && L.id !== S.todayLessonId);
+function kidWeekCard() {
+  const W = weekList(4), cur = W[3], G = CONFIG.WEEK_GOAL, filled = weeksFilled();
+  const canPick = cur.count >= G && !S.todayLessonId && !(S.attempt && S.attempt.mode === 'lesson') && readyForKid().length;
+  return `<div class="card wk${cur.count >= G ? ' full' : ''}"><div class="row"><h2 style="flex:1 1 0;text-align:left">My week</h2>${filled ? `<span class="chip p">🏆 ${filled} week${filled === 1 ? '' : 's'} filled</span>` : ''}</div>
+  <p class="lead">${weekLead(cur.count)}</p>${weekSlots(cur)}
+  ${canPick ? `<button class="big secondary" style="margin-bottom:0" data-a="go" data-v="kidPick">⭐ Pick a bonus lesson</button>` : ''}
+  ${S.results.length ? `<div class="stamps">${W.map(w => { const hit = w.count >= G; return `<div class="stamp${hit ? ' hit' : ''}"><b>${hit ? '⭐' : w.count || '–'}</b><small>${esc(w.label)}${hit ? `<br>${w.count} lessons` : ''}</small></div>`; }).join('')}</div>` : ''}</div>`;
+}
+VIEWS.kidPick = () => {
+  const list = readyForKid().slice(0, 4);
+  return `<div class="topbar"><button data-a="go" data-v="kidHome">← Back</button><span class="who">⭐ Bonus lesson</span><span></span></div>
+<p>You filled your week! Pick any one you like.</p>
+${list.length ? list.map(L => `<button class="card" style="display:block;width:100%;text-align:left" data-a="kidPick" data-v="${L.id}"><div style="font-size:30px">${SUBJECTS[L.meta.subject]?.emoji || '⭐'}</div><h2>${esc(L.meta.title)}</h2><span class="muted">${esc(SUBJECTS[L.meta.subject]?.label || '')}</span></button>`).join('') : '<div class="card"><p class="muted">No lessons waiting right now. Ask Mom!</p></div>'}`;
+};
+A.kidPick = id => {
+  const L = S.lessons[id]; if (!L || S.todayLessonId || weekList(1)[0].count < CONFIG.WEEK_GOAL) { go('kidHome'); return; }
+  S.todayLessonId = id; logAssign(id); (S.assignLog[S.assignLog.length - 1] || {}).byKid = true; save(); go('kidHome');
+};
+function weekChart(W) {
+  const G = CONFIG.WEEK_GOAL, top = Math.max(G + 2, ...W.map(w => w.count)), y0 = 150, h = 112, sy = v => y0 - h * v / top, bw = 46;
+  const gy = sy(G).toFixed(1);
+  return `<svg class="wkchart" viewBox="0 0 400 186" role="img" aria-label="Lessons per week, last 4 weeks, goal ${G}">
+  <line class="base" x1="10" x2="390" y1="${y0}" y2="${y0}"/><line class="goal" x1="10" x2="390" y1="${gy}" y2="${gy}"/><text x="390" y="${gy - 6}" text-anchor="end">goal ${G}</text>
+  ${W.map((w, i) => { const cx = 55 + i * 92, bh = Math.max(w.count ? 4 : 0, h * w.count / top), y = y0 - bh;
+    return `<g><title>${esc(w.label)}: ${w.count} lesson${w.count === 1 ? '' : 's'}${w.mastery != null ? ', average ' + w.mastery + '%' : ''}, ${w.minutes} min</title>
+    ${w.count ? `<path class="bar${w.current ? ' cur' : ''}" d="M${cx - bw / 2} ${y0}V${y + 4}q0-4 4-4h${bw - 8}q4 0 4 4V${y0}z"/>` : ''}
+    <text class="v" x="${cx}" y="${y - 8}" text-anchor="middle">${w.count}</text><text x="${cx}" y="172" text-anchor="middle">${esc(w.label)}</text></g>`; }).join('')}</svg>`;
+}
+function momWeekCard(detail) {
+  const W = weekList(4), cur = W[3], G = CONFIG.WEEK_GOAL, left = daysLeftInWeek();
+  const status = cur.count >= G ? `Goal met this week (${cur.count} of ${G}).` : `${cur.count} of ${G} this week, ${left} day${left === 1 ? '' : 's'} left including today.`;
+  const short = W.reduce((t, w) => t + w.short, 0);
+  return `<div class="card"><div class="row"><h2 style="flex:1 1 0;margin:0;text-align:left">Lessons per week</h2><span class="chip ${cur.count >= G ? 'g' : ''}">${cur.count} / ${G}</span></div>
+  <p class="muted" style="margin-bottom:4px"><small>${status}</small></p>${weekChart(W)}
+  ${detail ? `<table class="wktable"><tr><th>Week of</th><th>Lessons</th><th>Avg mastery</th><th>Minutes</th></tr>${W.map(w => `<tr><td>${esc(fmtDate(new Date(w.start + 'T12:00:00')))}${w.current ? ' (now)' : ''}</td><td>${w.count}${w.count >= G ? ' ✓' : ''}</td><td>${w.mastery == null ? '–' : w.mastery + '%'}</td><td>${w.minutes}</td></tr>`).join('')}</table>
+  <p class="muted"><small>Weeks run Monday to Sunday. A finished lesson counts when she spent at least ${CONFIG.WEEK_MIN_MINUTES} minutes on it; mistake reviews don’t count. Mastery is the help-free check score.${short ? ` ${short} very short lesson${short === 1 ? '' : 's'} in these weeks didn’t count.` : ''}</small></p>` : ''}</div>`;
+}
 const activeGoal = () => S.goals.find(g => !g.done);
 function goalCard(compact) {
   const g = activeGoal(); if (!g || !CONFIG.SHOW_MONEY) return '';
@@ -1573,13 +1665,14 @@ VIEWS.kidHome = () => {
   const hr = new Date().getHours(), hi = hr < 12 ? 'Good morning' : hr < 17 ? 'Hi' : 'Good evening';
   return `
 <div class="hello"><h1>${hi}, ${esc(kidName())}!</h1><span class="row" style="flex:0 0 auto;gap:8px"><button data-a="toggleSound" aria-label="Sound">${S.settings.sound === false ? '🔇' : '🔊'}</button><button data-a="switchUser">Switch</button></span></div>
-<div class="pills"><span class="pill">${ICON.flame}${S.streak.count}<small>day streak</small></span><span class="pill">${ICON.star}${S.points.balance}<small>points</small></span></div>
+<div class="pills"><span class="pill">${ICON.star}${S.points.balance}<small>points</small></span></div>
 ${CONFIG.SHOW_MONEY ? goalCard() : ''}
 ${L ? `<div class="hero s-${esc(L.meta.subject)}"><span class="mark">${SUBJECTS[L.meta.subject]?.emoji || '⭐'}</span>
   <div class="eyebrow">Today’s lesson${part}</div><h1>${esc(L.meta.title)}</h1>
   <p>Grab a pencil and paper.</p>
   <button class="go" data-a="${resumeLesson ? 'resumePlay' : 'startPlay'}">${ICON.play}${resumeLesson ? 'Keep going' : 'Let’s go'}</button></div>`
   : `<div class="card"><h2>No lesson right now</h2><p class="muted">${S.results.length ? 'Great work! Ask Mom for the next one.' : 'Ask Mom to start one.'}</p></div>`}
+${kidWeekCard()}
 ${kidJourney()}
 ${resumeReview ? `<button class="big secondary" data-a="resumePlay">Finish your review</button>` : ''}
 ${due && !resumeReview ? `<button class="big secondary" data-a="startReview">Review your mistakes (${due})</button>` : ''}
@@ -2119,7 +2212,7 @@ function finishAttempt() {
   if (a.pts) bd.push(['Correct answers', a.pts]);
   if (a.ptsPencil) bd.push(['Pencil work', a.ptsPencil]);
   if (perfect) bd.push(['Perfect check!', CONFIG.POINTS.perfectCheck]);
-  const sb = bumpStreak(); if (sb) bd.push([`${S.streak.count}-day streak bonus`, sb]);
+  bumpStreak(); // still tracked, no longer shown or rewarded: the weekly goal replaced the daily streak
   const total = bd.reduce((s, x) => s + x[1], 0);
   addPoints(total, 'Lesson: ' + L.meta.title);
   const r = {
@@ -2169,7 +2262,8 @@ VIEWS.reward = ({ rid }) => {
   <h1>Lesson complete!</h1>
   <p class="big-points">+${r.points} points</p>
   <ul class="breakdown">${r.breakdown.map(([k, v]) => `<li><span>${esc(k)}</span><b>+${v}</b></li>`).join('')}</ul>
-  <div class="stats"><div class="stat">${ICON.flame.replace('<svg','<svg width="30" height="30"')}<b>${S.streak.count}</b><span>day streak</span></div><div class="stat">${ICON.star.replace('<svg','<svg width="30" height="30"')}<b>${S.points.balance}</b><span>points</span></div><div class="stat"><span style="font-size:26px;line-height:30px">✅</span><b>${r.checkRight}/${r.checkTotal}</b><span>on the check</span></div></div>
+  ${(() => { const w = weekList(1)[0], G = CONFIG.WEEK_GOAL; const msg = !countsForWeek(r) ? `Lessons count toward your week when you spend at least ${CONFIG.WEEK_MIN_MINUTES} minutes on them.` : w.count === G ? 'You filled your week! 🎉' : w.count < G ? `${G - w.count} more to fill your week!` : w.count <= G + CONFIG.WEEK_BONUS ? 'Bonus star! ⭐' : 'Super week! 🌟'; return `<div class="card wk${w.count >= G ? ' full' : ''}" style="text-align:center"><p class="lead" style="margin-top:0">${msg}</p>${weekSlots(w, false)}</div>`; })()}
+  <div class="stats"><div class="stat"><span style="font-size:26px;line-height:30px">🗓️</span><b>${weekList(1)[0].count}/${CONFIG.WEEK_GOAL}</b><span>this week</span></div><div class="stat">${ICON.star.replace('<svg','<svg width="30" height="30"')}<b>${S.points.balance}</b><span>points</span></div><div class="stat"><span style="font-size:26px;line-height:30px">✅</span><b>${r.checkRight}/${r.checkTotal}</b><span>on the check</span></div></div>
   ${goalCard(true)}
   ${toReview ? `<button class="big secondary" data-a="startReview" data-v="${r.lessonId}">🔁 Review your mistakes (${toReview})</button>` : ''}
   ${nx ? (nx.lesson ? `<div class="card"><b>Up next:</b> ${esc(nx.lesson.meta.title)}<br><span class="muted">It’s ready for next time.</span></div>` : `<div class="card"><b>Up next:</b> ${esc(nx.entry.title)}<br><span class="muted">Being written. It’ll be ready soon.</span></div>`) : ''}
@@ -2256,7 +2350,7 @@ VIEWS.rewards = () => {
 <div class="card">${S.redeemables.length ? `<ul class="list">${S.redeemables.map(r => `<li class="item"><div class="grow t">${esc(r.name)}</div><span class="chip">${r.points} pts</span><button class="sm" data-a="redeem" data-v="${r.id}">Redeem</button><button class="sm" data-a="redeemDel" data-v="${r.id}">✕</button></li>`).join('')}</ul>` : '<p class="muted">e.g. “30 min screen time”, “Pick dinner”.</p>'}
   <div class="row" style="margin-top:10px"><input data-bind="RW:rname" placeholder="Reward" value="${esc(FORMS.RW.rname)}"><input data-bind="RW:rpts" type="number" inputmode="numeric" placeholder="Points" style="max-width:120px" value="${esc(FORMS.RW.rpts)}"><button class="ghost" style="flex:0" data-a="redeemAdd">Add</button></div></div>
 <h3>How points are earned</h3>
-<div class="card kv"><span>Finish a lesson</span><b>${CONFIG.POINTS.lessonBase}</b><span>Each correct answer</span><b>${CONFIG.POINTS.perCorrect}</b><span>${CONFIG.POINTS.streakEvery}-day streak</span><b>${CONFIG.POINTS.streakBonus}</b><span>Perfect check</span><b>${CONFIG.POINTS.perfectCheck}</b></div>`;
+<div class="card kv"><span>Finish a lesson</span><b>${CONFIG.POINTS.lessonBase}</b><span>Each correct answer</span><b>${CONFIG.POINTS.perCorrect}</b><span>Perfect check</span><b>${CONFIG.POINTS.perfectCheck}</b></div>`;
 };
 A.saveRate = () => { const v = Math.round(+$('#rateIn').value); if (v >= 1) { S.settings.rate = v; save(); toast('Saved.'); render(); } };
 A.goalAdd = () => { const n = str(FORMS.RW.goal), p = +FORMS.RW.price; if (!n || !(p > 0)) { toast('Add a name and a price.'); return; } S.goals.push({ id: uid(), name: n, price: Math.round(p * 100) / 100, done: false }); FORMS.RW.goal = ''; FORMS.RW.price = ''; save(); render(); };
