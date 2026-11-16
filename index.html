@@ -319,7 +319,8 @@ const CONFIG = {
   // Model that writes lessons. Accuracy matters here (answer keys).
   // Cheaper option: 'claude-haiku-5-5' (about 1/20th the cost, more answer-key mistakes).
   AUTHOR_MODEL: 'claude-sonnet-5-5',
-  AUTHOR_EFFORT: 'low',          // 'low' is fast. 'medium' thinks more (slower, a bit more accurate).
+  AUTHOR_EFFORT: 'medium',       // 'medium' thinks more (a little slower, more accurate keys). 'low' is faster.
+  AUTHOR_MAX_TOKENS: 32000,      // room for the extra thinking so lessons aren't cut off
   // Model for the "Explain it differently" button.
   EXPLAIN_MODEL: 'claude-haiku-5-5',
   EXPLAIN_CAP: 3,                // max "explain differently" taps per lesson
@@ -327,12 +328,15 @@ const CONFIG = {
   POINTS: { lessonBase: 100, perCorrect: 5, streakBonus: 50, streakEvery: 3, perfectCheck: 50 },
   DEFAULT_RATE: 100,             // points per $1 (Mom can change this in Rewards)
   STORAGE_KEY: 'g5tutor.v1',
+  REFRESH_PER_LESSON: 2,         // questions she got right 7-28 days ago, asked again in the warm-up
+  REFRESH_MIN_DAYS: 7, REFRESH_MAX_DAYS: 28,
+  FLAGS_PER_LESSON: 1,           // "this question looks wrong" taps allowed per lesson (a flagged question doesn't count)
   SHOW_MONEY: true,              // learner screens: show what her points are worth in dollars + goal progress
   WEEK_GOAL: 3,                  // lessons per week (Mon-Sun, iPad time)
   WEEK_MIN_MINUTES: 8,           // a finished lesson counts toward the week only with at least this much real work
   WEEK_BONUS: 2,                 // bonus slots Mom can add after the 3 (they unlock once 3 are done)
   BONUS_MULT: 2,                 // a bonus lesson's base points are multiplied by this
-  VERSION: 'v15 · 15 Nov',        // shown on the first screen so you can tell which copy you are running
+  VERSION: 'v16 · 16 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -633,31 +637,43 @@ VIEWS.pin = p => `
   <div class="logo">🔒</div>
   <h1>${p.mode === 'enter' ? 'Mom PIN' : p.mode === 'set1' ? 'Create a 4-digit PIN' : 'Type it again'}</h1>
   <p class="muted">${esc(p.msg || (p.mode === 'enter' ? '' : 'This keeps lessons and rewards grown-ups only.'))}</p>
-  <div class="dots">${[0, 1, 2, 3].map(i => `<span class="${i < pinBuf.length ? 'on' : ''}"></span>`).join('')}</div>
+  ${p.mode === 'enter' && pinLockLeft() ? `<p style="color:var(--danger);font-weight:700">Too many wrong tries. Wait ${pinLockLeft()} seconds.</p>` : ''}
+  <div class="dots">${Array.from({ length: pinLen(p) }, (_, i) => `<span class="${i < pinBuf.length ? 'on' : ''}"></span>`).join('')}</div>
   <div class="pad">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<button data-a="pinKey" data-v="${n}">${n}</button>`).join('')}
     <button class="ghost" data-a="pinBack">Back</button><button data-a="pinKey" data-v="0">0</button><button data-a="pinDel">⌫</button></div>
-  ${p.mode === 'enter' ? `<button class="link" data-a="go" data-v="forgot">Forgot PIN?</button>` : ''}
+  ${p.mode === 'enter' ? `<button class="link" data-a="go" data-v="forgot">Forgot PIN?</button>` : p.mode === 'set1' ? `<button class="link" data-a="pinLenToggle">${pinLen(p) === 6 ? 'Use 4 digits' : 'Use 6 digits (safer)'}</button>` : ''}
 </div>`;
 A.pinBack = () => { pinBuf = ''; go(view.p.change ? 'settings' : 'gate'); };
 A.pinDel = () => { pinBuf = pinBuf.slice(0, -1); render(); };
+// 4 digits by default, 6 if Mom chose it. After 3 wrong tries the pad locks for 30 s, doubling each further miss (kept across reloads).
+const pinLen = p => (p && p.len) || (p && p.mode !== 'enter' ? 4 : S.settings.pinLen || 4);
+const pinLockLeft = () => Math.max(0, Math.ceil(((S.settings.pinLockUntil || 0) - Date.now()) / 1000));
+A.pinLenToggle = () => { pinBuf = ''; go('pin', Object.assign({}, view.p, { len: pinLen(view.p) === 6 ? 4 : 6 })); };
 A.pinKey = v => {
-  if (pinBuf.length >= 4) return;
+  const p = view.p, len = pinLen(p);
+  if (p.mode === 'enter' && pinLockLeft()) { render(); return; }
+  if (pinBuf.length >= len) return;
   pinBuf += v; render();
-  if (pinBuf.length < 4) return;
-  const p = view.p, entered = pinBuf; pinBuf = '';
+  if (pinBuf.length < len) return;
+  const entered = pinBuf; pinBuf = '';
   setTimeout(() => {
     if (p.mode === 'enter') {
-      if (hashPin(entered) === S.settings.pin) { role = 'mom'; go(S.settings.welcomed ? 'momHome' : 'welcome'); pumpSequences(); }
-      else go('pin', { mode: 'enter', msg: 'That PIN didn’t match. Try again.' });
-    } else if (p.mode === 'set1') { pinFirst = entered; go('pin', { mode: 'set2', change: p.change }); }
+      if (hashPin(entered) === S.settings.pin) { S.settings.pinFails = 0; S.settings.pinLockUntil = 0; save(); role = 'mom'; go(S.settings.welcomed ? 'momHome' : 'welcome'); pumpSequences(); }
+      else {
+        const f = S.settings.pinFails = (S.settings.pinFails || 0) + 1;
+        if (f >= 3) S.settings.pinLockUntil = Date.now() + 30000 * Math.pow(2, Math.min(f - 3, 8));
+        save(); go('pin', { mode: 'enter', msg: 'That PIN didn’t match. Try again.' });
+      }
+    } else if (p.mode === 'set1') { pinFirst = entered; go('pin', { mode: 'set2', change: p.change, len }); }
     else {
       if (entered === pinFirst) {
-        S.settings.pin = hashPin(entered); save(); role = 'mom';
+        S.settings.pin = hashPin(entered); S.settings.pinLen = len; S.settings.pinFails = 0; S.settings.pinLockUntil = 0; save(); role = 'mom';
         if (p.change) { toast('PIN changed.'); go('settings'); } else go(S.settings.welcomed ? 'momHome' : 'welcome');
-      } else go('pin', { mode: 'set1', change: p.change, msg: 'Those didn’t match. Let’s try again.' });
+      } else go('pin', { mode: 'set1', change: p.change, len, msg: 'Those didn’t match. Let’s try again.' });
     }
   }, 150);
 };
+VIEWS.pin.after = () => { if (view.p.mode === 'enter' && pinLockLeft()) TIMER = setInterval(() => { if (view.name !== 'pin') return; render(); }, 1000); };
 VIEWS.forgot = () => `
 <div class="center-screen" style="text-align:left">
   <h1>Reset the PIN</h1>
@@ -981,13 +997,13 @@ function homeHero() {
 }
 VIEWS.momHome = () => {
   const pend = S.results.filter(r => !r.accepted), flags = S.flags.filter(f => f.status === 'open');
-  const needBackup = S.results.length > 0 && Date.now() - (S.settings.lastExport || 0) > 14 * 864e5;
+  const needBackup = S.results.length > 0 && (S.settings.lastExport || 0) < weekStartMs(ensureWeek().start); // once a week, from Monday
   const hr = new Date().getHours(), hi = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
   const strip = [
     !S.settings.apiKey ? ['Add your Claude key to make lessons', 'settings', 'Add'] : null,
     pend.length ? [`${pend.length} result${pend.length > 1 ? 's' : ''} to check`, 'results', 'View'] : null,
     flags.length ? [`${flags.length} flagged question${flags.length > 1 ? 's' : ''}`, 'flags', 'View'] : null,
-    needBackup ? ['Save a backup of her progress', 'exportData', 'Save'] : null,
+    needBackup ? ['New week: save a backup (one tap)', 'exportData', 'Save'] : null,
     (() => { const W = ensureWeek(), n = CONFIG.WEEK_GOAL - W.core.length; return n > 0 && !W.brk ? [`This week’s plan needs ${n} more lesson${n === 1 ? '' : 's'}`, 'lessons', 'Add'] : null; })(),
   ].filter(Boolean);
   const tile = k => { const x = subjStats(k); return `<button class="tile s-${k}" data-a="go" data-v="report">${ringSvg(x.total ? Math.max(x.covered / x.total, x.covered ? 0.06 : 0) : 0, '', SUBJECTS[k].emoji)}<div><b>${SUBJECTS[k].label}</b><span class="${x.mastery != null && x.mastery < REDO_BELOW ? 'low' : ''}">${x.mastery == null ? 'No score yet' : x.mastery + '% lately'}</span><small>${x.covered} of ${x.total} topics</small></div></button>`; };
@@ -1252,10 +1268,66 @@ async function addActivities(L) {
   if (!made.length) throw new Error('BAD_LESSON');
   L.practice.push(...made); return made.length;
 }
+/* ---------- Answer-key check: a second model answers every question without seeing the key ---------- */
+const KEYCHECK_SYSTEM = `ANSWER-KEY CHECK. You are checking a Grade 5 (Ontario) worksheet. Answer every question yourself, carefully. Return ONE JSON object and nothing else: {"answers":[{"id": string, "answer": ...}]}.
+- mcq: "answer" is the exact text of the correct choice.
+- numeric: "answer" is the number as a string (fractions like "3/4" are fine).
+- short: "answer" is a short word or phrase.
+- order: "answer" is the list of items in the correct order.
+- match: "answer" is the list of right-side items, in the order of the left-side items.
+- sort: "answer" is a list of bucket numbers (0-based), one per item, in item order.`;
+const checkable = q => ['mcq', 'numeric', 'short', 'order', 'match', 'sort'].includes(q.type);
+function keyCheckQuestions(L) {
+  return [...L.practice.map(q => ['practice', q]), ...L.check.map(q => ['check', q])].filter(([, q]) => checkable(q)).map(([sec, q]) => {
+    const o = { id: q.id, sec, type: q.type, question: q.prompt };
+    if (q.visual) o.visual = q.visual;
+    if (q.type === 'mcq') o.choices = q.choices;
+    if (q.type === 'order') o.items = shuffle(q.answer);
+    if (q.type === 'match') { o.left = q.pairs.map(x => x.a); o.right = shuffle(q.pairs.map(x => x.b)); }
+    if (q.type === 'sort') { o.buckets = q.buckets; o.items = q.items.map(x => x.text); }
+    return o;
+  });
+}
+function keyAgrees(q, ans) {
+  if (ans == null) return false;
+  if (q.type === 'match') { const a = arr(ans).map(str); return q.pairs.every((p, i) => a[i] === p.b); }
+  if (q.type === 'sort') { const a = arr(ans).map(Number); return q.items.every((it, i) => a[i] === it.b); }
+  if (q.type === 'order') return judge(q, arr(ans).map(str));
+  return judge(q, str(ans));
+}
+async function checkKeys(L) {
+  const qs = keyCheckQuestions(L);
+  if (!qs.length) return { status: 'ok', issues: [], at: Date.now() };
+  const text = await callClaude({ model: CONFIG.EXPLAIN_MODEL, effort: 'medium', maxTokens: 8000, system: KEYCHECK_SYSTEM,
+    content: [{ type: 'text', text: `Subject: ${SUBJECTS[L.meta.subject]?.label}. Lesson: ${L.meta.title}.\n${L.passage ? 'Reading passage:\n' + L.passage.text + '\n' : ''}Questions:\n${JSON.stringify(qs)}` }] });
+  const got = {}; arr(extractJSON(text).answers).forEach(x => { if (x && x.id != null) got[String(x.id)] = x.answer; });
+  const issues = [];
+  qs.forEach(o => { const q = (o.sec === 'check' ? L.check : L.practice).find(x => x.id === o.id); if (q && !keyAgrees(q, got[o.id])) issues.push({ qid: q.id, sec: o.sec, prompt: q.prompt, key: answerText(q), other: Array.isArray(got[o.id]) ? got[o.id].join(', ') : str(got[o.id]) || '(no answer)', status: 'open' }); });
+  return { status: issues.length ? 'issues' : 'ok', issues, at: Date.now() };
+}
+const keyIssuesOpen = L => !!(L && L.keyCheck && L.keyCheck.issues && L.keyCheck.issues.some(x => x.status === 'open'));
+async function runKeyCheck(L) { try { L.keyCheck = await checkKeys(L); } catch (e) { L.keyCheck = { status: 'error', issues: [], at: Date.now() }; } save(); }
+A.keyOk = v => { const [id, qid] = v.split(':'), L = S.lessons[id]; const x = L.keyCheck.issues.find(i => i.qid === qid); x.status = 'kept'; save(); render(); };
+A.keyRemove = v => {
+  const [id, qid] = v.split(':'), L = S.lessons[id], x = L.keyCheck.issues.find(i => i.qid === qid);
+  const list = x.sec === 'check' ? L.check : L.practice, min = x.sec === 'check' ? 2 : 3;
+  if (list.length <= min) { toast(`Can’t remove: the lesson needs at least ${min} ${x.sec} questions. Use Edit to fix the answer.`); return; }
+  L[x.sec] = list.filter(q => q.id !== qid); x.status = 'removed'; save(); toast('Removed.'); render();
+};
+A.keyRecheck = async (id, el) => { const L = S.lessons[id]; if (!L) return; if (el) { el.disabled = true; el.textContent = 'Checking…'; } await runKeyCheck(L); render(); };
+function keyCheckCard(L) {
+  const k = L.keyCheck; if (!k) return '';
+  if (k.status === 'error') return `<div class="card"><b>⚠️ The answer-key check didn’t run</b> (no connection?). The lesson can still be used.<button class="ghost" style="margin-top:10px" data-a="keyRecheck" data-v="${L.id}">Check the answers again</button></div>`;
+  const open = k.issues.filter(x => x.status === 'open');
+  if (!open.length) return `<p class="muted"><small>✓ Answer keys double-checked by a second model${k.issues.length ? ` (${k.issues.length} question${k.issues.length === 1 ? '' : 's'} reviewed by you)` : ''}.</small></p>`;
+  return `<div class="card" style="border:2px solid var(--accent)"><h2>Check ${open.length} answer${open.length === 1 ? '' : 's'} first</h2><p class="muted">A second model answered these differently. A wrong key marks ${esc(kidName())} wrong when she is right. This lesson can’t go into her week until you decide.</p>
+  <ul class="list">${open.map(x => `<li class="item"><div class="grow"><div class="t">${esc(x.prompt)}</div><div class="s">Key: <b>${esc(x.key)}</b> · Second check: <b>${esc(x.other)}</b> · ${x.sec}</div></div><button class="sm" data-a="keyOk" data-v="${L.id}:${x.qid}">Key is right</button><button class="sm" data-a="keyRemove" data-v="${L.id}:${x.qid}">Remove</button></li>`).join('')}</ul>
+  <p class="muted"><small>To correct a key instead, use Edit.</small></p></div>`;
+}
 async function authorLesson(req, onProgress, signal) {
   let lastErr;
   for (let tries = 0; tries < 2; tries++) {
-    const text = await callClaude({ model: CONFIG.AUTHOR_MODEL, effort: CONFIG.AUTHOR_EFFORT, system: AUTHOR_SYSTEM, content: authorUserContent(req), onProgress, signal });
+    const text = await callClaude({ model: CONFIG.AUTHOR_MODEL, effort: CONFIG.AUTHOR_EFFORT, maxTokens: CONFIG.AUTHOR_MAX_TOKENS, system: AUTHOR_SYSTEM, content: authorUserContent(req), onProgress, signal });
     try {
       const out = extractJSON(text);
       const lesson = normalizeLesson(out.lesson || out, req.subject);
@@ -1263,6 +1335,7 @@ async function authorLesson(req, onProgress, signal) {
       const target = req.expCode || (req.seq && req.seq.expCode);
       if (target && !lesson.meta.expectations.includes(target)) lesson.meta.expectations.unshift(target);
       [...lesson.practice, ...lesson.check].forEach(q => { if (!q.exp) q.exp = lesson.meta.expectations[0] || ''; });
+      if (!signal || !signal.aborted) await runKeyCheck(lesson);
       return { lesson, sequence: out.sequence, sourceNotes: str(out.sourceNotes) };
     } catch (e) { lastErr = e; if (e.name === 'AbortError') throw e; }
   }
@@ -1471,9 +1544,11 @@ VIEWS.summary = ({ id }) => {
   ${m.expectations.length ? `<p class="muted"><small>Ontario Grade 5 ${esc(SUBJECTS[m.subject].label)}: ${m.expectations.map(c => `<b>${esc(c)}</b> ${esc(expText(m.subject, c))}`).join(' · ')}</small></p>` : ''}
   <h3>What she’ll practice</h3>
   ${m.forMom ? `<p>${esc(m.forMom)}</p>` : ''}
+  ${keyCheckCard(L)}
   <p class="muted">${L.practice.length} practice questions (easy → harder) · ${L.offscreen.length} pencil tasks · ${L.check.length}-question check · about ${estMinutes(L)} min</p>
   <button class="big primary" data-a="startLesson" data-v="${id}">▶ ${L.status === 'done' ? 'Do it again' : inWeek(id) ? 'Hand it to ' + esc(kidName()) : 'START'}</button>
   <div class="row">
+    ${S.results.some(r => r.lessonId === id) ? `<button class="ghost" data-a="freshQs" data-v="${id}">🔄 New questions for a redo</button>` : ''}
     <button class="ghost" data-a="addFun" data-v="${id}">✨ Add fun activities</button>
     <button class="ghost" data-a="editLesson" data-v="${id}">Edit (optional)</button>
     ${canCollapse ? `<button class="ghost" data-a="collapseSeq" data-v="${id}">Make it one lesson</button>` : ''}
@@ -1484,10 +1559,27 @@ ${seq ? `<h3>The sequence</h3><div class="card"><ul class="list">${seq.lessons.m
   <span class="chip ${e.lessonId ? 'g' : ''}">${e.lessonId ? (S.lessons[e.lessonId]?.status === 'done' ? 'Done' : 'Ready') : e.status === 'deleted' ? 'Removed' : 'Writing…'}</span></li>`).join('')}</ul></div>` : ''}`;
 };
 A.startLesson = id => {
+  if (keyIssuesOpen(S.lessons[id])) { toast('Check the answer keys first.'); return; }
+  if (inWeek(id) && slotDone(id)) { toast('She already did this one this week.'); return; }
   if (S.attempt && S.attempt.mode === 'lesson' && S.attempt.lessonId !== id) { if (!confirm(kidName() + ' is part-way through another lesson. Switch? Her progress on it will be cleared.')) return; S.attempt = null; }
   if (!inWeek(id) || slotDone(id)) addToWeek(id, true);
   S.todayLessonId = id;
   save(); role = 'kid'; go('kidHome'); toast('Ready for ' + kidName() + '! 🎉');
+};
+A.freshQs = async (id, el) => {
+  const L = S.lessons[id]; if (!L) return;
+  if (!S.settings.apiKey) { toast('Add your Claude key in Settings first.'); return; }
+  if (!confirm('Write new practice and check questions for this lesson? It uses a few cents. The teaching cards stay the same.')) return;
+  el.disabled = true; el.textContent = 'Writing new questions…';
+  try {
+    const out = await authorLesson({ subject: L.meta.subject, mode: 'topic', expCode: L.meta.expectations[0] || '', topic: `${L.meta.title}. Same concepts as before: ${L.concepts.join('; ')}. Write NEW practice, pencil and check questions; do not repeat these: ${[...L.practice, ...L.check].map(q => q.prompt).join(' | ').slice(0, 3000)}`, text: '', file: null, split: false });
+    const N = out.lesson, v = (L.qVersion || 1) + 1;
+    [...N.practice, ...N.check].forEach(q => { q.id = 'v' + v + q.id; });
+    if (N.keyCheck) N.keyCheck.issues.forEach(x => { x.qid = 'v' + v + x.qid; });
+    Object.assign(L, { practice: N.practice, check: N.check, offscreen: N.offscreen.length ? N.offscreen : L.offscreen, keyCheck: N.keyCheck, qVersion: v });
+    save(); toast('New questions ready.');
+  } catch (e) { toast(friendlyError(e)); }
+  render();
 };
 A.addFun = async (id, el) => {
   const L = S.lessons[id]; if (!L) return;
@@ -1576,7 +1668,7 @@ A.edSave = () => {
 /* ==================================================================
    Learner home
    ================================================================== */
-const dueReviews = () => S.review.filter(r => r.due <= todayStr());
+const dueReviews = () => S.review.filter(r => r.due <= todayStr() && !r.refresh);
 /* ---------- Weekly goal (lessons per week, Mon-Sun on iPad time) ---------- */
 const weekStart = t => { const d = new Date(t); d.setDate(d.getDate() - (d.getDay() + 6) % 7); return todayStr(d); };
 const countsForWeek = r => (r.minutes || 0) >= CONFIG.WEEK_MIN_MINUTES;
@@ -1632,8 +1724,9 @@ const isBreak = start => (S.week && S.week.start === start) ? S.week.brk : S.bre
 const bonusOpen = () => weekList(1)[0].count >= CONFIG.WEEK_GOAL;
 function addToWeek(id, quiet) {
   const W = ensureWeek(), L = S.lessons[id]; if (!L) return false;
+  if (keyIssuesOpen(L)) { toast('Check the answer keys first: open the lesson.'); return false; }
   if (inWeek(id) && !slotDone(id)) { if (!quiet) toast('Already in this week’s plan.'); return true; }
-  if (inWeek(id)) { W.core = W.core.filter(x => x !== id); W.bonus = W.bonus.filter(x => x !== id); } // done earlier this week, doing it again
+  if (slotDone(id)) { if (!quiet) toast('She already did this one this week. Add it again next week.'); return false; }
   if (W.core.length < CONFIG.WEEK_GOAL) W.core.push(id);
   else if (W.bonus.length < CONFIG.WEEK_BONUS) W.bonus.push(id);
   else { if (!quiet) toast(`This week is full (${CONFIG.WEEK_GOAL} + ${CONFIG.WEEK_BONUS} bonus). Remove one first.`); return false; }
@@ -1724,7 +1817,7 @@ VIEWS.kidHome = () => {
   const rate = S.settings.rate || 100;
   return `
 <div class="hello"><h1>${hi}, ${esc(kidName())}!</h1><span class="row" style="flex:0 0 auto;gap:8px"><button data-a="toggleSound" aria-label="Sound">${S.settings.sound === false ? '🔇' : '🔊'}</button><button data-a="switchUser">Switch</button></span></div>
-<div class="pills"><span class="pill">${ICON.star}${S.points.balance}<small>points${CONFIG.SHOW_MONEY ? ' · worth ' + money(S.points.balance / rate) : ''}</small></span></div>
+<div class="pills"><span class="pill">${ICON.star}${S.points.balance}<small>points${CONFIG.SHOW_MONEY ? ' · worth ' + money(S.points.balance / rate) : ''}</small></span>${pendingPts() ? `<span class="pill">⏳ ${pendingPts()}<small>waiting for Mom</small></span>` : ''}</div>
 ${CONFIG.SHOW_MONEY ? goalCard() : ''}
 ${kidWeekCard()}
 ${kidJourney()}
@@ -1756,9 +1849,23 @@ function buildSteps(L, warm) {
 function newAttempt(mode, lessonId, steps) {
   return { id: uid(), mode, lessonId, steps, si: 0, sub: {}, tier: 1, run: 0, maxTier: 1, used: [], answers: [], pts: 0, ptsPencil: 0, pencil: [], alt: {}, helped: {}, interject: null, start: Date.now(), active: 0, tick: Date.now() };
 }
+/* Questions she got right 1-4 weeks ago come back in the warm-up (forgetting happens there). Right again: gone. Wrong: normal review. */
+function refreshPicks(n, notLesson) {
+  S.review = S.review.filter(r => !r.refresh); // drop unused picks from an earlier start
+  const now = Date.now(), seen = new Set(S.review.map(r => r.lessonId + ':' + r.q.id)), pool = [];
+  S.results.filter(r => r.at <= now - CONFIG.REFRESH_MIN_DAYS * 864e5 && r.at >= now - CONFIG.REFRESH_MAX_DAYS * 864e5 && r.lessonId !== notLesson && S.lessons[r.lessonId] && r.log).forEach(r => {
+    const L = S.lessons[r.lessonId];
+    r.log.filter(x => x.ok && !x.help && (x.sec === 'practice' || x.sec === 'check')).forEach(x => {
+      const q = [...L.practice, ...L.check].find(y => String(y.prompt).slice(0, 160) === x.prompt);
+      if (q && !seen.has(L.id + ':' + q.id)) { seen.add(L.id + ':' + q.id); pool.push({ lessonId: L.id, q }); }
+    });
+  });
+  return shuffle(pool).slice(0, n).map(({ lessonId, q }) => { const r = { id: uid(), lessonId, q: JSON.parse(JSON.stringify(q)), box: 1, due: todayStr(), cause: '', refresh: true }; S.review.push(r); return r.id; });
+}
 A.startPlay = () => {
   const L = S.lessons[S.todayLessonId]; if (!L) return;
-  const warm = dueReviews().filter(r => r.lessonId !== L.id).slice(0, 3).map(r => r.id);
+  if (S.results.some(r => r.lessonId === L.id)) [...L.practice, ...L.check].forEach(q => { if (q.type === 'mcq') q.choices = shuffle(q.choices); }); // a redo: new choice order
+  const warm = [...dueReviews().filter(r => r.lessonId !== L.id).slice(0, 3).map(r => r.id), ...refreshPicks(CONFIG.REFRESH_PER_LESSON, L.id)];
   S.attempt = newAttempt('lesson', L.id, buildSteps(L, warm));
   INPUT = { text: '', order: [] }; save(); go('play');
 };
@@ -1782,7 +1889,7 @@ A.startNotebook = () => {
 };
 VIEWS.notebook = () => {
   const open = S.notebook.filter(n => n.status === 'open').sort((x, y) => y.last - x.last), done = S.notebook.filter(n => n.status === 'conquered').sort((x, y) => y.done - x.done);
-  const row = n => `<li class="item"><div class="grow"><div class="t">${esc(n.q.prompt)}</div><div class="s">${esc(SUBJECTS[n.subject]?.label || '')} · ${n.cause ? CAUSES[n.cause][0] + ' ' + CAUSES[n.cause][1] + ' · ' : ''}${n.status === 'open' ? `answer: <b>${esc(answerText(n.q))}</b>` : `beat it ${fmtDate(n.done)} ✓`}</div></div></li>`;
+  const row = n => `<li class="item"><div class="grow"><div class="t">${esc(n.q.prompt)}</div><div class="s">${esc(SUBJECTS[n.subject]?.label || '')} · ${n.cause ? CAUSES[n.cause][0] + ' ' + CAUSES[n.cause][1] + ' · ' : ''}${n.status === 'open' ? `missed ${n.misses}×` : `beat it ${fmtDate(n.done)} ✓`}</div></div></li>`;
   return `
 <div class="topbar"><button data-a="go" data-v="kidHome">← Back</button><span class="who">📓 My mistakes</span><span></span></div>
 <p class="muted">Every mistake is a chance to get smarter. Beat each one and it moves to the “beaten” list.</p>
@@ -1925,8 +2032,7 @@ A.pencilDone = () => { if (pencilWait() > 0) return; S.attempt.sub.phase = 'answ
 A.pencilScore = v => {
   const a = S.attempt, st = a.steps[a.si], P = curLesson().offscreen[st.i], n = clamp(+v, 0, P.problems.length);
   a.pencil.push({ i: st.i, right: n, of: P.problems.length });
-  a.ptsPencil += n * CONFIG.POINTS.perCorrect;
-  toast(n === P.problems.length ? 'All of them! Amazing! 🌟' : n ? `+${n * CONFIG.POINTS.perCorrect} points. Nice work! ✏️` : 'Thanks for being honest. That’s how we learn! 💪');
+  toast(n === P.problems.length ? 'All of them! Amazing! 🌟' : n ? 'Nice work! ✏️' : 'Thanks for being honest. That’s how we learn! 💪');
   advance();
 };
 A.revealStep = () => { S.attempt.sub.shown = (S.attempt.sub.shown || 0) + 1; save(); render(); };
@@ -2061,7 +2167,7 @@ function questionCard(q, label, isPractice) {
   <h2 class="prompt">${esc(q.prompt)}</h2>
   ${curLesson() && curLesson().passage && S.attempt.lessonId ? `<details class="psg"><summary>📖 Reread the passage</summary><div class="passage">${passageHTML(curLesson().passage)}</div></details>` : ''}
   ${body}
-  ${fb ? feedbackView(q, fb) : `<button class="flag" data-a="flagQ">🚩 This question looks wrong</button>`}</div>`;
+  ${fb ? feedbackView(q, fb) : flagsLeft() > 0 ? `<button class="flag" data-a="flagQ">🚩 This question looks wrong</button>` : ''}</div>`;
 }
 const CHEERS = ['Yes! 🎉', 'Nailed it! ⭐', 'You got it! 🙌', 'Awesome! 🚀', 'Correct! 💪', 'Great thinking! 🧠'];
 const answerText = q => q.type === 'order' ? q.answer.join(' → ') : q.type === 'match' ? q.answer.join(', ') : q.answer;
@@ -2082,7 +2188,7 @@ function feedbackView(q, fb) {
       <div class="row">${Object.entries(CAUSES).map(([k, [e, t]]) => `<button class="ghost ${fb.cause === k ? 'on' : ''}" data-a="setCause" data-v="${k}">${e} ${t}</button>`).join('')}</div>
       ${fb.cause ? `<p class="muted" style="margin:8px 0 0">${fb.cause === 'slip' ? 'No worries, everybody slips! You’ll get another try soon.' : fb.cause === 'fact' ? 'That’s okay. We’ll practice that fact again.' : 'Good to know. We’ll look at the idea again before you try it.'}</p>` : ''}</div>
     <button class="big primary" data-a="next">Got it →</button>
-    <button class="flag" data-a="flagQ">🚩 I think the answer key is wrong</button></div>`;
+    ${flagsLeft() > 0 ? `<button class="flag" data-a="flagQ">🚩 I think the answer key is wrong</button>` : ''}</div>`;
 }
 /* ---------- input ---------- */
 A.key = k => {
@@ -2143,7 +2249,7 @@ function submitAnswer(given) {
 A.meantThat = () => {
   const a = S.attempt, st = a.steps[a.si], rec = a.answers[a.answers.length - 1], q = curQ();
   if (!rec || rec.correct) return;
-  rec.correct = true; rec.selfCorrected = true; a.pts += CONFIG.POINTS.perCorrect;
+  rec.correct = true; rec.selfCorrected = true; // no points for self-corrections; Mom sees them on the result
   if (st.k === 'warm') { const r = S.review.find(x => x.id === st.id); if (r) { r.box = Math.max(1, r.box); reviewUpdate(r, true); } }
   else { S.review = S.review.filter(r => !(r.lessonId === a.lessonId && r.q.id === q.id)); nbUnmiss(a.lessonId, q.id); }
   if (st.k === 'practice') { a.run = 1; a.pendingInterject = null; }
@@ -2166,8 +2272,10 @@ function advance() {
   if (a.si >= a.steps.length) finishAttempt(); else { render(); window.scrollTo(0, 0); }
 }
 /* ---------- flag a bad question (goes to Mom; not counted against her) ---------- */
+const flagsLeft = () => { const a = S.attempt; return !a || a.mode !== 'lesson' ? 1 : CONFIG.FLAGS_PER_LESSON - a.answers.filter(x => x.flagged).length; };
 A.flagQ = () => {
   const a = S.attempt, st = a.steps[a.si], q = curQ(); if (!q) return;
+  if (flagsLeft() <= 0) { toast('You already flagged one in this lesson. Mom will look.'); return; }
   if (!confirm('Tell Mom this question looks wrong? It won’t count against you.')) return;
   const lessonId = st.k === 'warm' ? (S.review.find(r => r.id === st.id)?.lessonId || a.lessonId) : a.lessonId;
   const rec = a.sub.fb ? a.answers[a.answers.length - 1] : null;
@@ -2202,6 +2310,10 @@ function addToReview(lessonId, q) {
 }
 /* Silly slips are retired after 2 right answers; forgotten facts and misunderstood ideas need 4 (spread over days). */
 function reviewUpdate(r, correct) {
+  if (r.refresh) { // an old question she got right: right again retires it, wrong puts it into normal review
+    if (correct) { S.review = S.review.filter(x => x !== r); return; }
+    r.refresh = false; nbMiss(r.lessonId, r.q);
+  }
   const n = nbFor(r.lessonId, r.q.id);
   if (correct) {
     r.box++;
@@ -2262,19 +2374,28 @@ function finishAttempt() {
   const chkRight = chk.filter(x => x.correct).length;
   const chkFree = chk.filter(x => !x.helped), basis = chkFree.length ? chkFree : chk, basisRight = basis.filter(x => x.correct).length;
   const perfect = chk.length > 0 && chkRight === chk.length;
-  const base = L.reward?.pointsBase || CONFIG.POINTS.lessonBase, mins = Math.max(1, Math.round(a.active / 60000));
-  const isBonus = S.week && S.week.bonus.includes(L.id) && !slotDone(L.id) && bonusOpen() && mins >= CONFIG.WEEK_MIN_MINUTES;
-  const bd = [isBonus ? [`Bonus lesson ×${CONFIG.BONUS_MULT}`, base * CONFIG.BONUS_MULT] : ['Lesson complete', base]];
-  if (a.pts) bd.push(['Correct answers', a.pts]);
-  if (a.ptsPencil) bd.push(['Pencil work', a.ptsPencil]);
-  if (perfect) bd.push(['Perfect check!', CONFIG.POINTS.perfectCheck]);
+  const base = CONFIG.POINTS.lessonBase, mins = Math.max(1, Math.round(a.active / 60000));
+  const mastery = basis.length ? Math.round(100 * basisRight / basis.length) : 0;
+  const counts = mins >= CONFIG.WEEK_MIN_MINUTES;
+  const paidThisWeek = S.results.some(x => x.lessonId === L.id && x.paid && x.at >= weekStartMs(S.week.start));
+  const isBonus = counts && !paidThisWeek && S.week.bonus.includes(L.id) && !slotDone(L.id) && bonusOpen();
+  // Points rules (see review 2026-11-16): nothing for a lesson that doesn't count (under 8 minutes), nothing for doing
+  // the same lesson again in one week, and the lesson part scales with the help-free check score (half for finishing, half for the score).
+  const lessonPts = Math.round((base / 2 + base / 2 * mastery / 100) * (isBonus ? CONFIG.BONUS_MULT : 1));
+  let bd;
+  if (!counts) bd = [[`No points this time: lessons pay when you spend at least ${CONFIG.WEEK_MIN_MINUTES} minutes`, 0]];
+  else if (paidThisWeek) bd = [['No points: you already earned this lesson this week', 0]];
+  else {
+    bd = [[isBonus ? `Bonus lesson ×${CONFIG.BONUS_MULT} (score ${mastery}%)` : `Lesson complete (score ${mastery}%)`, lessonPts]];
+    if (a.pts) bd.push(['Correct answers', a.pts]);
+    if (perfect) bd.push(['Perfect check!', CONFIG.POINTS.perfectCheck]);
+  }
   bumpStreak(); // still tracked, no longer shown or rewarded: the weekly goal replaced the daily streak
-  const total = bd.reduce((s, x) => s + x[1], 0);
-  addPoints(total, 'Lesson: ' + L.meta.title);
+  const total = bd.reduce((s, x) => s + x[1], 0); // held as "waiting for Mom" until she accepts the result
   const r = {
     id: uid(), lessonId: L.id, title: L.meta.title, subject: L.meta.subject, at: Date.now(),
     minutes: mins, bonus: !!isBonus,
-    mastery: basis.length ? Math.round(100 * basisRight / basis.length) : 0, masteryRight: basisRight, masteryTotal: basis.length, helpedCount: chk.length - chkFree.length, allHelped: chk.length > 0 && !chkFree.length, checkRight: chkRight, checkTotal: chk.length,
+    mastery, masteryRight: basisRight, masteryTotal: basis.length, helpedCount: chk.length - chkFree.length, allHelped: chk.length > 0 && !chkFree.length, checkRight: chkRight, checkTotal: chk.length,
     causes: scored.reduce((m, x) => { if (!x.correct && x.cause) m[x.cause] = (m[x.cause] || 0) + 1; return m; }, {}),
     practiceRight: prac.filter(x => x.correct).length, practiceTotal: prac.length, maxTier: a.maxTier,
     pencil: a.pencil, explainUsed: L.explainUsed || 0,
@@ -2283,7 +2404,8 @@ function finishAttempt() {
     log: scored.map(x => ({ sec: x.sec, prompt: String(x.prompt).slice(0, 160), given: String(x.given == null ? '' : x.given).slice(0, 80), answer: String(x.answer || '').slice(0, 100), ok: !!x.correct, help: !!x.helped, cause: x.cause || '', tier: x.tier || 0, kind: x.type || '' })),
     expectations: L.meta.expectations.slice(),
     byExp: scored.reduce((m, x) => { if (x.exp && !x.helped && (x.sec === 'practice' || x.sec === 'check')) { const e = m[x.exp] = m[x.exp] || [0, 0]; e[1]++; if (x.correct) e[0]++; } return m; }, {}),
-    points: total, breakdown: bd, accepted: false,
+    points: total, breakdown: bd, accepted: false, pending: total > 0, paid: total > 0,
+    selfCorrected: a.answers.filter(x => x.selfCorrected).map(x => ({ prompt: x.prompt, given: x.given, answer: x.answer })),
   };
   S.results.unshift(r); if (S.results.length > 600) S.results.pop();
   S.results.slice(80).forEach(x => { delete x.log; }); // keep the full question-by-question log for the latest 80 lessons only
@@ -2316,7 +2438,7 @@ VIEWS.reward = ({ rid }) => {
 <div class="center-screen reward">
   ${medal(r.mastery)}
   <h1>Lesson complete!</h1>
-  <p class="big-points">+${r.points} points</p>
+  <p class="big-points">+${r.points} points</p>${r.points ? '<p class="muted" style="margin-top:-8px">Mom will check them, then they go in your balance.</p>' : ''}
   <ul class="breakdown">${r.breakdown.map(([k, v]) => `<li><span>${esc(k)}</span><b>+${v}</b></li>`).join('')}</ul>
   ${(() => { const w = weekList(1)[0], G = CONFIG.WEEK_GOAL; const msg = !countsForWeek(r) ? `Lessons count toward your week when you spend at least ${CONFIG.WEEK_MIN_MINUTES} minutes on them.` : w.count === G ? (S.week.bonus.length ? 'You did your 3! 🎉 Bonus lessons are open: double points!' : 'You did your 3! 🎉 Week complete.') : w.count < G ? `${G - w.count} more to fill your week!` : r.bonus ? `Bonus star! ⭐ ${CONFIG.BONUS_MULT}× points!` : w.count <= G + CONFIG.WEEK_BONUS ? 'Bonus star! ⭐' : 'Super week! 🌟'; return `<div class="card wk${w.count >= G ? ' full' : ''}" style="text-align:center"><p class="lead" style="margin-top:0">${msg}</p>${weekSlots(w, false)}</div>`; })()}
   <div class="stats"><div class="stat"><span style="font-size:26px;line-height:30px">🗓️</span><b>${weekList(1)[0].count}/${CONFIG.WEEK_GOAL}</b><span>this week</span></div><div class="stat">${ICON.star.replace('<svg','<svg width="30" height="30"')}<b>${S.points.balance}</b><span>points</span></div><div class="stat"><span style="font-size:26px;line-height:30px">✅</span><b>${r.checkRight}/${r.checkTotal}</b><span>on the check</span></div></div>
@@ -2348,8 +2470,9 @@ function confetti() {
    ================================================================== */
 VIEWS.results = () => `
 <div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Results</span><span></span></div>
+${S.results.some(r => !r.accepted) ? `<div class="card"><p style="margin-top:0">${pendingPts()} points are waiting for you to accept. Accepting adds them to ${esc(kidName())}’s balance. Open a result to see self-corrections and flags first.</p><button class="big primary" data-a="acceptAll">Accept all</button></div>` : ''}
 <div class="card">${S.results.length ? `<ul class="list">${S.results.map(r => `<li class="item"><div class="grow"><div class="t">${esc(r.title)}</div>
-  <div class="s">${fmtDate(r.at)} · ${r.mastery}% · ${r.minutes} min · level ${r.maxTier}/3</div></div>
+  <div class="s">${fmtDate(r.at)} · ${r.mastery}% · ${r.minutes} min · ${r.rejected ? 'not paid' : (r.points || 0) + ' pts' + (r.pending ? ' waiting' : '')}${r.flagged && r.flagged.length ? ' · 🚩' : ''}${r.selfCorrected && r.selfCorrected.length ? ' · ✋ self-corrected' : ''}</div></div>
   ${r.accepted ? '<span class="chip g">Accepted</span>' : `<button class="sm" data-a="acceptResult" data-v="${r.id}">Accept</button>`}<button class="sm" data-a="openResult" data-v="${r.id}">View</button></li>`).join('')}</ul>` : '<p class="muted">No results yet.</p>'}</div>`;
 VIEWS.result = ({ id }) => {
   const r = S.results.find(x => x.id === id); if (!r) return VIEWS.results();
@@ -2363,7 +2486,8 @@ ${r.helpedCount ? `<span>Mastery counts only answers she got without extra help<
 ${r.causes && Object.keys(r.causes).length ? `<span>Why she says she missed them</span><b>${Object.entries(r.causes).map(([k, n]) => `${CAUSES[k][1]} ${n}`).join(', ')}</b>` : ''}<span>Practice</span><b>${r.practiceRight} of ${r.practiceTotal}</b>
 ${Object.keys(r.byExp || {}).length ? Object.entries(r.byExp).map(([c, [a, b]]) => `<span>${esc(c)} ${esc(expText(r.subject, c))}</span><b>${a} of ${b}</b>`).join('') : ''}
 <span>Pencil work (her own count)</span><b>${pen[0]} of ${pen[1]}</b><span>“Explain differently” used</span><b>${r.explainUsed} of ${CONFIG.EXPLAIN_CAP}</b><span>Points earned</span><b>${r.points}</b></div>
-${r.accepted ? '<p class="chip g" style="margin-top:14px">Accepted ✓</p>' : `<button class="big primary" data-a="acceptResult" data-v="${r.id}">Accept result</button>`}</div>
+${r.selfCorrected && r.selfCorrected.length ? `<div class="card" style="box-shadow:none;border:1px solid var(--line)"><b>She marked these right herself (“my answer means the same”):</b><ul>${r.selfCorrected.map(x => `<li>${esc(x.prompt)}<br><small>She wrote: <b>${esc(x.given)}</b> · Key: <b>${esc(x.answer)}</b></small></li>`).join('')}</ul></div>` : ''}
+${r.accepted ? `<p class="chip ${r.rejected ? '' : 'g'}" style="margin-top:14px">${r.rejected ? 'Not paid' : 'Accepted ✓'}</p>` : `<button class="big primary" data-a="acceptResult" data-v="${r.id}">Accept${r.pending ? ` and pay ${r.points} points` : ''}</button>${r.pending ? `<button class="link" data-a="rejectResult" data-v="${r.id}">Don’t pay for this one</button>` : ''}`}</div>
 ${r.log && r.log.length ? `<h3>Every question (${r.log.length})</h3><div class="card"><ul class="list">${r.log.map((x, i) => `<li class="item"><span class="chip ${x.ok ? 'g' : ''}" style="${x.ok ? '' : 'background:var(--soft-bg);color:var(--soft)'}">${x.ok ? '✓' : '✗'}</span><div class="grow"><div class="t">${esc(x.prompt)}</div>
   <div class="s">${x.sec === 'check' ? 'Check' : x.sec === 'practice' ? 'Practice' : 'Warm-up'}${x.tier ? ' · level ' + x.tier : ''}${x.kind && ['match', 'sort', 'fraction', 'numberline', 'order'].includes(x.kind) ? ' · hands-on' : ''} · She: ${esc(x.given)}${x.ok ? '' : ' · Answer: ' + esc(x.answer)}${x.help ? ' · <b>had extra help</b>' : ''}${x.cause ? ' · ' + esc(CAUSES[x.cause] ? CAUSES[x.cause][1] : '') : ''}</div></div></li>`).join('')}</ul></div>` : ''}
 ${r.pencil && r.pencil.length ? `<div class="card"><b>Pencil work (her own count):</b> ${r.pencil.map(p => `task ${p.i + 1}: ${p.right} of ${p.of}`).join(' · ')}</div>` : ''}
@@ -2371,7 +2495,11 @@ ${r.missed.length ? `<h3>Questions she missed (${r.missed.length})</h3><div clas
 ${r.flagged.length ? `<h3>She flagged</h3><div class="card"><ul>${r.flagged.map(f => `<li>${esc(f)}</li>`).join('')}</ul><button class="ghost" data-a="go" data-v="flags">Review flags when you have time</button></div>` : ''}`;
 };
 A.openResult = id => go('result', { id });
-A.acceptResult = id => { const r = S.results.find(x => x.id === id); if (r) { r.accepted = true; save(); if (view.name === 'results') render(); toast('Accepted ✓'); render(); } };
+const pendingPts = () => S.results.filter(r => r.pending && !r.accepted).reduce((t, r) => t + (r.points || 0), 0);
+function acceptOne(r) { if (!r || r.accepted) return; r.accepted = true; if (r.pending) { addPoints(r.points, 'Lesson: ' + r.title); r.pending = false; } }
+A.acceptResult = id => { acceptOne(S.results.find(x => x.id === id)); save(); toast('Accepted ✓'); render(); };
+A.acceptAll = () => { const n = S.results.filter(r => !r.accepted).length; S.results.filter(r => !r.accepted).forEach(acceptOne); save(); toast(`Accepted ${n} ✓`); render(); };
+A.rejectResult = id => { const r = S.results.find(x => x.id === id); if (!r || r.accepted || !confirm('Don’t pay the points for this lesson?')) return; r.accepted = true; r.pending = false; r.rejected = true; save(); toast('Not paid.'); render(); };
 VIEWS.flags = () => {
   const open = S.flags.filter(f => f.status === 'open');
   return `
@@ -2381,7 +2509,12 @@ ${open.length ? open.map(f => `<div class="card"><p class="muted"><small>${esc(S
   <div class="row" style="margin-top:12px"><button class="ghost danger" data-a="flagRemove" data-v="${f.id}">Remove the question</button>${S.lessons[f.lessonId] ? `<button class="ghost" data-a="flagEdit" data-v="${f.id}">Fix it</button>` : ''}<button class="ghost" data-a="flagKeep" data-v="${f.id}">It’s fine</button></div></div>`).join('')
     : '<div class="card"><p class="muted">Nothing flagged. 👍</p></div>'}`;
 };
-A.flagKeep = id => { const f = S.flags.find(x => x.id === id); f.status = 'kept'; save(); render(); };
+A.flagKeep = id => { // Mom says the key is right: the question goes back into her review and notebook
+  const f = S.flags.find(x => x.id === id), L = S.lessons[f.lessonId]; f.status = 'kept';
+  const q = L && [...L.practice, ...L.check].find(x => x.id === f.qid);
+  if (q && f.given !== '(skipped)') addToReview(f.lessonId, q);
+  save(); toast('Kept. It’s back in her review.'); render();
+};
 A.flagRemove = id => {
   const f = S.flags.find(x => x.id === id), L = S.lessons[f.lessonId];
   if (L) { L.practice = L.practice.filter(q => q.id !== f.qid || (L.practice.length <= 3)); L.check = L.check.filter(q => q.id !== f.qid || L.check.length <= 2); }
@@ -2408,7 +2541,9 @@ VIEWS.rewards = () => {
 <div class="card">${S.redeemables.length ? `<ul class="list">${S.redeemables.map(r => `<li class="item"><div class="grow t">${esc(r.name)}</div><span class="chip">${r.points} pts</span><button class="sm" data-a="redeem" data-v="${r.id}">Redeem</button><button class="sm" data-a="redeemDel" data-v="${r.id}">✕</button></li>`).join('')}</ul>` : '<p class="muted">e.g. “30 min screen time”, “Pick dinner”.</p>'}
   <div class="row" style="margin-top:10px"><input data-bind="RW:rname" placeholder="Reward" value="${esc(FORMS.RW.rname)}"><input data-bind="RW:rpts" type="number" inputmode="numeric" placeholder="Points" style="max-width:120px" value="${esc(FORMS.RW.rpts)}"><button class="ghost" style="flex:0" data-a="redeemAdd">Add</button></div></div>
 <h3>How points are earned</h3>
-<div class="card kv"><span>Finish a lesson</span><b>${CONFIG.POINTS.lessonBase}</b><span>Each correct answer</span><b>${CONFIG.POINTS.perCorrect}</b><span>Perfect check</span><b>${CONFIG.POINTS.perfectCheck}</b><span>Bonus lesson (after the ${CONFIG.WEEK_GOAL})</span><b>${CONFIG.POINTS.lessonBase * CONFIG.BONUS_MULT}</b></div>`;
+<div class="card kv"><span>Finish a lesson (8+ minutes, once a week each), by check score</span><b>${CONFIG.POINTS.lessonBase / 2}–${CONFIG.POINTS.lessonBase}</b><span>Each correct answer</span><b>${CONFIG.POINTS.perCorrect}</b><span>Perfect check</span><b>${CONFIG.POINTS.perfectCheck}</b><span>Bonus lesson (after the ${CONFIG.WEEK_GOAL}), by check score</span><b>${CONFIG.POINTS.lessonBase / 2 * CONFIG.BONUS_MULT}–${CONFIG.POINTS.lessonBase * CONFIG.BONUS_MULT}</b><span>Pencil work, self-corrections, short lessons</span><b>0</b></div>
+<p class="muted"><small>Lesson points wait until you accept the result (Home → results to check).</small></p>
+<h3>History</h3><div class="card">${S.points.log.length ? `<ul class="list">${S.points.log.slice(-15).reverse().map(x => `<li class="item"><div class="grow"><div class="t">${esc(x.why)}</div><div class="s">${new Date(x.t).toLocaleString()}</div></div><b>${x.n > 0 ? '+' : ''}${x.n || ''}</b></li>`).join('')}</ul>` : '<p class="muted">Nothing yet.</p>'}</div>`;
 };
 A.payOut = () => {
   const d = +$('#payIn').value, rate = S.settings.rate || 100, pts = Math.round(d * rate);
@@ -2417,7 +2552,7 @@ A.payOut = () => {
   if (!confirm(`Take ${pts} points (${money(d)}) from ${kidName()}?`)) return;
   addPoints(-pts, 'Paid out ' + money(d)); save(); toast('Done. ' + S.points.balance + ' points left.'); render();
 };
-A.saveRate = () => { const v = Math.round(+$('#rateIn').value); if (v >= 1) { S.settings.rate = v; save(); toast('Saved.'); render(); } };
+A.saveRate = () => { const v = Math.round(+$('#rateIn').value), old = S.settings.rate || 100; if (v >= 1 && v !== old) { S.settings.rate = v; S.points.log.push({ t: Date.now(), n: 0, why: `Rate changed: ${old} → ${v} points per $1` }); save(); toast('Saved.'); render(); } };
 A.goalAdd = () => { const n = str(FORMS.RW.goal), p = +FORMS.RW.price; if (!n || !(p > 0)) { toast('Add a name and a price.'); return; } S.goals.push({ id: uid(), name: n, price: Math.round(p * 100) / 100, done: false }); FORMS.RW.goal = ''; FORMS.RW.price = ''; save(); render(); };
 A.goalDel = id => { S.goals = S.goals.filter(g => g.id !== id); save(); render(); };
 A.goalBought = id => {
@@ -2467,10 +2602,12 @@ A.eraseAll = () => {
   localStorage.removeItem(CONFIG.STORAGE_KEY); load(); role = null; GEN = null; go('gate');
 };
 A.exportData = () => {
-  const data = Object.assign({}, S, { settings: Object.assign({}, S.settings, { apiKey: '', pin: null }), attempt: null, app: 'g5-tutor', exportedAt: new Date().toISOString() });
+  const rate = S.settings.rate || 100, owed = money(S.points.balance / rate);
+  const summary = `${kidName()} · ${todayStr()} · balance ${S.points.balance} points (${owed} at ${rate} per $1) · ${pendingPts()} points waiting · ${S.results.length} lessons done`;
+  const data = Object.assign({ summary, app: 'g5-tutor', exportedAt: new Date().toISOString() }, S, { settings: Object.assign({}, S.settings, { apiKey: '', pin: null, pinFails: 0, pinLockUntil: 0 }), attempt: null });
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const url = URL.createObjectURL(blob), a = document.createElement('a');
-  a.href = url; a.download = `tutor-backup-${todayStr()}.json`; document.body.appendChild(a); a.click();
+  a.href = url; a.download = `tutor-backup-${todayStr()}-balance-${owed.replace('$', '')}.json`; document.body.appendChild(a); a.click();
   setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 1500);
   S.settings.lastExport = Date.now(); save(); toast('Backup saved to your Files / Downloads.'); if (view.name === 'momHome' || view.name === 'settings') render();
 };
@@ -2482,7 +2619,7 @@ function importData(file) {
       if (!d || !d.lessons || !d.settings || !d.points) throw new Error('bad');
       if (!confirm('Replace everything on this iPad with this backup?')) return;
       const keep = { apiKey: S.settings.apiKey, pin: S.settings.pin };
-      delete d.app; delete d.exportedAt;
+      delete d.app; delete d.exportedAt; delete d.summary;
       S = Object.assign(DEFAULT_STATE(), d);
       S.settings = Object.assign(DEFAULT_STATE().settings, d.settings, { apiKey: keep.apiKey || '', pin: keep.pin || d.settings.pin || null, welcomed: true });
       S.points = Object.assign(DEFAULT_STATE().points, d.points); S.streak = Object.assign(DEFAULT_STATE().streak, d.streak || {});

@@ -47,6 +47,14 @@ function lessonJSON(title, subject = 'math') {
     ],
   };
 }
+// The fake second model "solves" a question by looking it up in the fixture above.
+function solve(q) {
+  const L = lessonJSON('x'), src = [...L.practice, ...L.check].find(x => x.prompt === q.question);
+  if (!src) return null;
+  if (src.type === 'match') return src.pairs.map(p => p.b);
+  if (src.type === 'sort') return src.items.map(i => i.bucket);
+  return src.answer;
+}
 function sse(text) {
   const ev = o => 'data: ' + JSON.stringify(o) + '\n\n';
   return ev({ type: 'message_start' }) + ev({ type: 'content_block_delta', delta: { type: 'text_delta', text } }) + ev({ type: 'message_delta', delta: { stop_reason: 'end_turn' } }) + ev({ type: 'message_stop' });
@@ -73,6 +81,12 @@ async function open({ time = WED, state, claudeCalls } = {}) {
     const body = JSON.parse(route.request().postData() || '{}');
     page.calls.push(body.model);
     const all = JSON.stringify(body.messages);
+    if (/ANSWER-KEY CHECK/.test(body.system || '')) {
+      page.keyChecks = (page.keyChecks || 0) + 1;
+      if (page.keyCheckFails) return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":{"message":"overloaded"}}' });
+      const qs = JSON.parse(body.messages[0].content[0].text.split('Questions:\n')[1]);
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(JSON.stringify({ answers: qs.map(q => ({ id: q.id, answer: (page.badKeys || []).includes(q.question) ? 'something else' : solve(q) })) })) });
+    }
     if (/haiku/.test(body.model)) return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse('Think of sharing a sandwich with a friend: two equal halves.') });
     const m = all.match(/Topic [A-Z][a-z]+/);
     return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(JSON.stringify({ lesson: lessonJSON(m ? m[0] : 'Mock lesson') })) });
@@ -147,7 +161,7 @@ async function freshWithLessons(titles, opts = {}) {
  *  wrong:   set of question prompts to answer wrongly
  *  explainDifferently: tap "Explain it differently" on the first card
  */
-async function play(page, { minutes = 15, wrong = [], explainDifferently = false, cause } = {}) {
+async function play(page, { minutes = 15, wrong = [], explainDifferently = false, cause, stopAt } = {}) {
   await page.waitForFunction(() => view.name === 'play');
   const per = Math.floor(minutes * MIN / 30); // a full lesson is about 30 taps
   for (let guard = 0; guard < 120; guard++) {
@@ -159,6 +173,7 @@ async function play(page, { minutes = 15, wrong = [], explainDifferently = false
         q: q && { type: q.type, prompt: q.prompt, choices: q.choices, answer: q.answer, pairs: q.pairs, items: q.items, n: q.n, d: q.d, min: q.min, max: q.max, target: q.target }, shuf: a.sub.shuf, seen: a.sub.seen };
     });
     if (st.done) return st.view;
+    if (stopAt && st.q && !st.fb && st.interject == null && st.q.type === stopAt) return 'stopped';
     await tick(page, per);
     if (st.interject != null && st.k === 'practice' && !st.fb) { await act(page, 'endInterject'); continue; }
     if (st.k === 'explain') { if (explainDifferently) { explainDifferently = false; await act(page, 'explainDiff', '0'); await page.waitForFunction(() => !EXPLAINING); } await act(page, 'next'); continue; }
@@ -239,6 +254,8 @@ test('Mom makes a lesson with Claude (faked) and it lands in this week', async (
   const id = await makeLesson(page, 'Topic Fractions');
   ok((await text(page)).includes('Topic Fractions'), 'summary shows the lesson');
   eq(page.calls.filter(m => /sonnet/.test(m)).length, 1, 'one authoring call');
+  eq(page.keyChecks, 1, 'answer keys checked once by the second model');
+  ok((await text(page)).includes('Answer keys double-checked'), 'Mom sees the check passed');
   const L = await page.evaluate(id => S.lessons[id], id);
   eq(L.practice.length, 8, 'all 8 practice questions kept');
   eq(L.check.length, 3, '3 check questions kept');
@@ -258,9 +275,9 @@ test('Aanya plays a whole lesson, every question type, all right', async () => {
   eq([r.checkRight, r.checkTotal], [3, 3], 'check score');
   eq(r.practiceRight, r.practiceTotal, 'all practice right');
   ok(r.minutes >= 17 && r.minutes <= 24, 'minutes from the clock: ' + r.minutes);
-  const pts = 100 + (r.practiceTotal + 3) * 5 + 2 * 5 + 50;
-  eq(r.points, pts, 'points = lesson + answers + pencil + perfect check');
-  eq(await page.evaluate(() => S.points.balance), pts, 'balance');
+  const pts = 100 + (r.practiceTotal + 3) * 5 + 50;
+  eq(r.points, pts, 'points = lesson + answers + perfect check (pencil self-score pays nothing)');
+  eq(await page.evaluate(() => [S.points.balance, pendingPts()]), [0, pts], 'held until Mom accepts');
   const t = await text(page);
   ok(t.includes('Lesson complete') && t.includes('2 more to fill your week'), 'reward screen with week progress');
   return page;
@@ -339,7 +356,10 @@ test('backup: save a file and restore it', async () => {
   const [dl] = await Promise.all([page.waitForEvent('download'), act(page, 'exportData')]);
   const file = path.join(os.tmpdir(), 'tutor-backup-test.json');
   await dl.saveAs(file);
-  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  ok(/tutor-backup-\d{4}-\d\d-\d\d-balance-3\.21\.json/.test(dl.suggestedFilename()), 'balance in the file name: ' + dl.suggestedFilename());
+  const raw = fs.readFileSync(file, 'utf8');
+  ok(raw.startsWith('{"summary":"Aanya') && raw.includes('balance 321 points ($3.21'), 'summary is the first thing in the file');
+  const saved = JSON.parse(raw);
   eq(saved.settings.apiKey, '', 'key not in backup');
   eq(saved.week.core, ids, 'week plan in backup');
   await page.evaluate(() => { S.points.balance = 0; S.week.core = []; save(); go('settings'); });
@@ -449,13 +469,13 @@ test('bonus lesson pays 2x base points only after the 3, core lessons pay 1x', a
   const { page, ids } = await freshWithLessons(['Topic A', 'Topic B', 'Topic C', 'Topic D', 'Topic E']);
   await page.evaluate(ids => ids.forEach(id => addToWeek(id, true)), ids);
   await kidLogin(page);
-  for (const id of ids.slice(0, 3)) { const r = await kidDoes(page, id, { minutes: 10 }); eq(r.breakdown[0], ['Lesson complete', 100], 'core pays 100'); }
+  for (const id of ids.slice(0, 3)) { const r = await kidDoes(page, id, { minutes: 10 }); eq(r.breakdown[0], ['Lesson complete (score 100%)', 100], 'core pays 100'); }
   const b = await kidDoes(page, ids[3], { minutes: 10 });
-  eq(b.breakdown[0], ['Bonus lesson ×2', 200], 'bonus pays 200');
+  eq(b.breakdown[0], ['Bonus lesson ×2 (score 100%)', 200], 'bonus pays 200');
   ok(b.bonus, 'result marked bonus');
   ok((await text(page)).includes('Bonus lesson ×2'), 'shown on reward screen');
   const short = await kidDoes(page, ids[4], { minutes: 3 });
-  eq(short.breakdown[0], ['Lesson complete', 100], 'a too-short bonus lesson gets no double');
+  eq([short.points, short.bonus], [0, false], 'a too-short bonus lesson pays nothing');
   eq(await page.evaluate(() => weekList(1)[0].count), 4, 'week count 4');
   return page;
 });
@@ -586,6 +606,256 @@ test('4-week chart on Mom home and report has the right counts', async () => {
   return page;
 });
 
+/* =========================================================
+   Fixes from the 2026-11-16 review
+   ========================================================= */
+test('points: short lessons pay nothing, a lesson pays once a week, lesson part scales with the score', async () => {
+  const { page, ids } = await freshWithLessons(['Topic A', 'Topic B']);
+  await page.evaluate(ids => ids.forEach(id => addToWeek(id, true)), ids);
+  await kidLogin(page);
+  const all = ['Which shows three quarters?', 'What is 10 - 4?', 'How many halves make a whole?', 'Which is one half?', 'What is 3 + 4?', 'Name the top number of a fraction.', 'Put in order, smallest first.', 'Match each fraction to its word.', 'Sort them.', 'Shade three quarters.', 'Place one half.'];
+  // the exploit from the review: every answer wrong, about a minute a run
+  for (let i = 0; i < 3; i++) { const r = await kidDoes(page, ids[0], { minutes: 1, wrong: all }); eq(r.points, 0, 'farming run ' + (i + 1) + ' pays 0'); }
+  ok((await text(page)).includes('at least 8 minutes'), 'reward screen says why');
+  const r1 = await kidDoes(page, ids[0], { minutes: 10, wrong: all });
+  eq(r1.breakdown, [['Lesson complete (score 0%)', 50]], 'a real try with 0% still earns the finishing half');
+  await momLogin(page);
+  await page.evaluate(id => { S.week.core = S.week.core.filter(x => x !== id); go('lessons'); }, ids[0]); // Mom tries to add it again the same week
+  await act(page, 'assignLesson', ids[0]);
+  ok(!(await S(page, 'S.week.core')).includes(ids[0]), 'a lesson done this week cannot be added again');
+  await kidLogin(page);
+  const r3 = await kidDoes(page, ids[1], { minutes: 10, wrong: ['What is 10 - 4?'] });
+  eq(r3.breakdown[0], ['Lesson complete (score 67%)', 84], 'score-scaled: 50 + 50 × 67%');
+  eq(await page.evaluate(() => [S.points.balance, pendingPts()]), [0, 50 + r3.points], 'nothing paid until Mom accepts');
+  ok((await text(page)).length > 0, 'ok');
+  await page.evaluate(() => go('kidHome'));
+  ok((await text(page)).includes('waiting for Mom'), 'Aanya sees points waiting');
+  return page;
+});
+
+test('Mom accepts or refuses results; only accepted points reach the balance', async () => {
+  const { page, ids } = await freshWithLessons(['Topic A', 'Topic B', 'Topic C']);
+  await page.evaluate(ids => ids.forEach(id => addToWeek(id, true)), ids);
+  await kidLogin(page);
+  const a = await kidDoes(page, ids[0], { minutes: 10 });
+  const b = await kidDoes(page, ids[1], { minutes: 10 });
+  const c = await kidDoes(page, ids[2], { minutes: 10 });
+  await momLogin(page);
+  ok((await text(page)).includes('3 results to check'), 'Mom home strip');
+  await page.evaluate(id => go('result', { id }), c.id);
+  await act(page, 'rejectResult', c.id);
+  await page.evaluate(() => go('results'));
+  ok((await text(page)).includes(`${a.points + b.points} points are waiting`), 'waiting total shown');
+  await act(page, 'acceptAll');
+  eq(await page.evaluate(() => [S.points.balance, pendingPts()]), [a.points + b.points, 0], 'accepted two, refused one');
+  await page.evaluate(() => go('rewards'));
+  ok((await text(page)).includes('Lesson: Topic A'), 'history lists the paid lesson');
+  return page;
+});
+
+test('self-grading: pencil and "means the same" earn nothing, Mom sees self-corrections', async () => {
+  const { page, ids } = await freshWithLessons(['Topic A']);
+  await page.evaluate(id => addToWeek(id, true), ids[0]);
+  await kidLogin(page);
+  await act(page, 'kidStart', ids[0]);
+  // play until the short question, answer it wrong, then tap "My answer means the same thing"
+  eq(await play(page, { minutes: 0, stopAt: 'short' }), 'stopped', 'reached the short question');
+  const before = await page.evaluate(() => S.attempt.pts);
+  await page.fill('#shortIn', 'the top one'); await act(page, 'answerShort');
+  await act(page, 'meantThat');
+  eq(await page.evaluate(() => S.attempt.pts), before, 'no points for a self-correction');
+  await play(page, { minutes: 12 });
+  const r = await S(page, 'S.results[0]');
+  eq(r.selfCorrected.map(x => x.given), ['the top one'], 'recorded on the result');
+  ok(!r.breakdown.some(x => /Pencil/.test(x[0])), 'no pencil points');
+  await momLogin(page);
+  await page.evaluate(id => go('result', { id }), r.id);
+  ok((await text(page)).includes('She marked these right herself'), 'Mom sees it before accepting');
+  return page;
+});
+
+test('flags: one per lesson; "It’s fine" puts the question back into her review', async () => {
+  const { page, ids } = await freshWithLessons(['Topic A']);
+  await page.evaluate(id => addToWeek(id, true), ids[0]);
+  await kidLogin(page);
+  await act(page, 'kidStart', ids[0]);
+  await play(page, { minutes: 0, stopAt: 'mcq' });
+  const q = await page.evaluate(() => { const q = curQ(); return { choices: q.choices, answer: q.answer }; });
+  await act(page, 'answerMcq', String(q.choices.findIndex(c => c !== q.answer))); // gets it wrong, then says the key is wrong
+  await act(page, 'flagQ');
+  await play(page, { minutes: 0, stopAt: 'numeric' });
+  eq(await page.locator('[data-a="flagQ"]').count(), 0, 'no second flag button');
+  await page.evaluate(() => A.flagQ());
+  eq(await page.evaluate(() => S.flags.length), 1, 'second flag refused');
+  await play(page, { minutes: 12 });
+  await momLogin(page);
+  await page.evaluate(() => go('flags'));
+  await act(page, 'flagKeep');
+  eq(await page.evaluate(() => S.review.some(r => r.q.prompt === 'Which is one half?')), true, 'back in her review');
+  return page;
+});
+
+test('mistakes notebook no longer shows the answers', async () => {
+  const { page, ids } = await freshWithLessons(['Topic A']);
+  await page.evaluate(id => addToWeek(id, true), ids[0]);
+  await kidLogin(page);
+  await kidDoes(page, ids[0], { minutes: 10, wrong: ['What is 3 + 4?'] });
+  await page.evaluate(() => go('notebook'));
+  const t = await text(page);
+  ok(t.includes('What is 3 + 4?') && t.includes('missed 1×'), 'mistake listed');
+  ok(!/answer:\s*7/.test(t), 'answer hidden');
+  return page;
+});
+
+test('PIN: 3 wrong tries lock it for 30 s, then 60 s; the lock survives a reload', async () => {
+  const page = await open();
+  await momSetup(page, '1357');
+  const wrong = async () => { await page.evaluate(() => { role = null; go('gate'); }); await act(page, 'pickMom'); for (const d of '0000') await act(page, 'pinKey', d); await page.waitForTimeout(200); };
+  for (let i = 0; i < 3; i++) await wrong();
+  ok((await text(page)).includes('Too many wrong tries'), 'locked after 3');
+  for (const d of '1357') await act(page, 'pinKey', d);
+  await page.waitForTimeout(200);
+  eq(await page.evaluate(() => role), null, 'right PIN refused while locked');
+  await page.reload();
+  await act(page, 'pickMom');
+  ok((await text(page)).includes('Too many wrong tries'), 'still locked after reload');
+  await tick(page, 31e3);
+  await wrong();
+  await tick(page, 31e3);
+  await page.evaluate(() => { go('pin', { mode: 'enter' }); });
+  ok((await text(page)).includes('Too many wrong tries'), '4th miss locks for 60 s');
+  await tick(page, 30e3);
+  await page.evaluate(() => { go('pin', { mode: 'enter' }); });
+  for (const d of '1357') await act(page, 'pinKey', d);
+  await page.waitForFunction(() => role === 'mom');
+  eq(await page.evaluate(() => S.settings.pinFails), 0, 'a correct PIN resets the count');
+  return page;
+});
+
+test('PIN: Mom can choose 6 digits', async () => {
+  const page = await open();
+  await act(page, 'pickMom');
+  await act(page, 'pinLenToggle');
+  for (const d of '246810') await act(page, 'pinKey', d);
+  await page.waitForFunction(() => view.p.mode === 'set2');
+  for (const d of '246810') await act(page, 'pinKey', d);
+  await page.waitForFunction(() => view.name === 'welcome');
+  await act(page, 'welcomeSkip');
+  await page.evaluate(() => { role = null; go('gate'); });
+  await act(page, 'pickMom');
+  eq(await page.locator('.dots span').count(), 6, 'six dots');
+  for (const d of '246810') await act(page, 'pinKey', d);
+  await page.waitForFunction(() => role === 'mom');
+  return page;
+});
+
+test('rate changes are written to the history Mom sees', async () => {
+  const { page } = await freshWithLessons([]);
+  await page.evaluate(() => go('rewards'));
+  await page.fill('#rateIn', '1'); await act(page, 'saveRate');
+  ok((await text(page)).includes('Rate changed: 100 → 1 points per $1'), 'logged');
+  return page;
+});
+
+test('backup: Mom gets a one-tap reminder each new week', async () => {
+  const { page, ids } = await freshWithLessons(['Topic A']);
+  await page.evaluate(id => addToWeek(id, true), ids[0]);
+  await kidLogin(page);
+  await kidDoes(page, ids[0], { minutes: 10 });
+  await momLogin(page);
+  ok((await text(page)).includes('New week: save a backup'), 'reminder before the first backup');
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.locator('.strip[data-a="exportData"]').evaluate(e => e.click())]);
+  ok(dl.suggestedFilename().includes('balance-'), 'downloaded');
+  await page.waitForTimeout(100);
+  ok(!(await text(page)).includes('New week: save a backup'), 'gone once saved');
+  await setTime(page, new Date(2026, 10, 16, 8, 0).getTime());
+  await page.evaluate(() => go('momHome'));
+  ok((await text(page)).includes('New week: save a backup'), 'back on Monday');
+  return page;
+});
+
+test('answer-key check: a disagreement blocks the lesson until Mom decides', async () => {
+  const page = await open();
+  await momSetup(page);
+  page.badKeys = ['What is 3 + 4?', 'How many halves make a whole?', 'What is 10 - 4?'];
+  const id = await makeLesson(page, 'Topic Keys');
+  ok((await text(page)).includes('Check 3 answers first'), 'Mom is shown the 3 disagreements');
+  await page.evaluate(id => go('lessons'), id);
+  await act(page, 'assignLesson', id);
+  eq(await page.evaluate(() => S.week.core), [], 'cannot go into the week yet');
+  await page.evaluate(id => go('summary', { id }), id);
+  const q1 = await page.evaluate(id => S.lessons[id].keyCheck.issues[0].qid, id);
+  const q2 = await page.evaluate(id => S.lessons[id].keyCheck.issues[1].qid, id);
+  const q3 = await page.evaluate(id => S.lessons[id].keyCheck.issues[2].qid, id);
+  await act(page, 'keyRemove', `${id}:${q1}`);
+  await act(page, 'keyRemove', `${id}:${q2}`); // check 3 -> 2
+  await act(page, 'keyRemove', `${id}:${q3}`); // refused: a lesson keeps at least 2 check questions
+  eq(await page.evaluate(id => S.lessons[id].check.length, id), 2, 'check keeps at least 2');
+  await act(page, 'keyOk', `${id}:${q3}`);
+  eq(await page.evaluate(([id, q]) => S.lessons[id].practice.some(x => x.id === q), [id, q1]), false, 'practice question removed');
+  ok((await text(page)).includes('Answer keys double-checked'), 'all decided');
+  await page.evaluate(() => go('lessons'));
+  await act(page, 'assignLesson', id);
+  eq(await page.evaluate(() => S.week.core), [id], 'now it can go in');
+  return page;
+});
+
+test('answer-key check: if the check fails, the lesson still works and can be re-checked', async () => {
+  const page = await open();
+  await momSetup(page);
+  page.keyCheckFails = true; page.allowErrors = /status of 500/;
+  const id = await makeLesson(page, 'Topic Offline');
+  ok((await text(page)).includes('didn’t run'), 'Mom told');
+  await page.evaluate(() => go('lessons'));
+  await act(page, 'assignLesson', id);
+  eq(await page.evaluate(() => S.week.core), [id], 'not blocked');
+  page.keyCheckFails = false;
+  await page.evaluate(id => go('summary', { id }), id);
+  await act(page, 'keyRecheck', id);
+  await page.waitForFunction(id => S.lessons[id].keyCheck.status === 'ok', id);
+  return page;
+});
+
+test('questions she got right 1-4 weeks ago come back in the warm-up', async () => {
+  const { page, ids } = await freshWithLessons(['Topic Old', 'Topic New']);
+  await page.evaluate(id => addToWeek(id, true), ids[0]);
+  await setTime(page, WED - 10 * DAY);
+  await page.evaluate(() => ensureWeek());
+  await page.evaluate(id => addToWeek(id, true), ids[0]);
+  await kidLogin(page);
+  await kidDoes(page, ids[0], { minutes: 10 });
+  await setTime(page, WED);
+  await page.evaluate(id => { ensureWeek(); addToWeek(id, true); go('kidHome'); }, ids[1]);
+  await act(page, 'kidStart', ids[1]);
+  const warm = await page.evaluate(() => S.attempt.steps.filter(s => s.k === 'warm').map(s => S.review.find(r => r.id === s.id)));
+  eq(warm.length, 2, 'two old questions in the warm-up');
+  ok(warm.every(r => r.refresh && r.lessonId !== S), 'they are refresh questions');
+  eq(await page.evaluate(() => dueReviews().length), 0, 'not counted as mistakes to review');
+  const wrongPrompt = warm[0].q.prompt;
+  await play(page, { minutes: 12, wrong: [wrongPrompt] });
+  const rv = await page.evaluate(() => S.review.map(r => [r.q.prompt, !!r.refresh]));
+  ok(rv.some(([p, f]) => p === wrongPrompt && !f), 'the missed one is now a normal review item');
+  ok(!rv.some(([p]) => p === warm[1].q.prompt && warm[1].q.prompt !== wrongPrompt), 'the right one is gone');
+  ok(await page.evaluate(p => S.notebook.some(n => n.q.prompt === p), wrongPrompt), 'and in the notebook');
+  return page;
+});
+
+test('redo: Mom can get brand-new questions (fresh ids, answer keys checked)', async () => {
+  const { page, ids } = await freshWithLessons(['Topic Redo']);
+  await page.evaluate(id => addToWeek(id, true), ids[0]);
+  await kidLogin(page);
+  await kidDoes(page, ids[0], { minutes: 10 });
+  await momLogin(page);
+  const before = await page.evaluate(id => S.lessons[id].practice.map(q => q.id), ids[0]);
+  await page.evaluate(id => go('summary', { id }), ids[0]);
+  await act(page, 'freshQs', ids[0]);
+  await page.waitForFunction(id => S.lessons[id].qVersion === 2, ids[0], { timeout: 10000 });
+  const L = await page.evaluate(id => S.lessons[id], ids[0]);
+  ok(L.practice.every(q => !before.includes(q.id)), 'new question ids');
+  eq(L.keyCheck.status, 'ok', 'keys checked');
+  return page;
+});
+
 /* ---------------- runner ---------------- */
 (async () => {
   const filter = process.argv[2] ? new RegExp(process.argv[2], 'i') : null;
@@ -597,6 +867,7 @@ test('4-week chart on Mom home and report has the right counts', async () => {
     let page;
     try {
       page = await t.fn();
+      if (page && page.allowErrors) page.errors = page.errors.filter(e => !page.allowErrors.test(e));
       if (page && page.errors.length) throw new Fail('console errors: ' + page.errors.join(' | '));
       pass++; console.log(`  ✓ ${t.name} (${Date.now() - t0} ms)`);
     } catch (e) {
