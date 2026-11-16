@@ -924,6 +924,277 @@ test('offline: the app opens from cache when there is no internet (service worke
   return page;
 });
 
+/* =========================================================
+   Sync between devices (fake GitHub gist shared by two browsers)
+   ========================================================= */
+const GOOD_TOKEN = 'github_pat_test_good';
+class FakeGist {
+  constructor() { this.gists = {}; this.token = GOOD_TOKEN; this.n = 0; this.gets = 0; this.staleOnce = false; }
+  view(id, upto) {
+    const g = this.gists[id], vs = g.versions.slice(0, upto == null ? g.versions.length : upto);
+    const cur = vs[vs.length - 1];
+    return { id, files: { 'tutor-sync.txt': { content: cur.content, truncated: false, raw_url: 'https://gist.example/raw' } }, history: vs.slice().reverse().map(v => ({ version: v.version })) };
+  }
+  latest(id) { return this.gists[id].versions[this.gists[id].versions.length - 1].content; }
+  async attach(page) {
+    await page.context().route('https://api.github.com/**', async route => {
+      const req = route.request(), url = new URL(req.url()), m = req.method();
+      const reply = (status, body) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
+      if (req.headers().authorization !== 'Bearer ' + this.token) return reply(401, { message: 'Bad credentials' });
+      const parts = url.pathname.split('/').filter(Boolean); // gists, id, ver
+      if (m === 'POST' && parts.length === 1) {
+        const id = 'gist' + (++this.n), content = JSON.parse(req.postData()).files['tutor-sync.txt'].content;
+        this.gists[id] = { versions: [{ version: id + '-v1', content }] };
+        return reply(201, this.view(id));
+      }
+      const g = this.gists[parts[1]];
+      if (!g) return reply(404, { message: 'Not Found' });
+      if (m === 'GET' && parts.length === 3) { this.byVersion = (this.byVersion || 0) + 1; const i = g.versions.findIndex(v => v.version === parts[2]); return reply(200, this.view(parts[1], i + 1)); }
+      if (m === 'GET') { this.gets++; if (this.staleOnce) { this.staleOnce = false; return reply(200, this.view(parts[1], g.versions.length - 1)); } return reply(200, this.view(parts[1])); }
+      if (m === 'PATCH') {
+        g.versions.push({ version: parts[1] + '-v' + (g.versions.length + 1), content: JSON.parse(req.postData()).files['tutor-sync.txt'].content });
+        return reply(200, this.view(parts[1]));
+      }
+      return reply(405, {});
+    });
+  }
+}
+/* Laptop: Mom turns sync on through Settings. Returns the setup code. */
+async function turnOnSync(page, gist) {
+  await gist.attach(page);
+  await page.evaluate(() => go('settings'));
+  await page.fill('[data-bind="SY:token"]', GOOD_TOKEN);
+  await act(page, 'syncStart');
+  await page.waitForFunction(() => S.settings.sync && S.settings.sync.gist);
+  await page.evaluate(() => { S.settings.sync.auto = false; save(); }); // tests sync by hand, at exact moments
+  return page.evaluate(() => setupCode(S.settings.sync));
+}
+/* iPad: a fresh device joins from the first screen with the setup code. */
+async function joinSync(gist, code, opts = {}) {
+  const page = await open(opts);
+  await gist.attach(page);
+  ok((await text(page)).includes('Already set up on another device?'), 'fresh device offers to join');
+  await act(page, 'go', 'join');
+  await page.fill('#syncCode', code);
+  await act(page, 'syncJoin');
+  await page.waitForFunction(() => view.name === 'gate' && S.settings.sync && S.settings.sync.last > 0);
+  await page.evaluate(() => { S.settings.sync.auto = false; save(); });
+  return page;
+}
+const sync = page => page.evaluate(() => syncNow());
+async function closeOther(p) { if (p) await p.context().close().catch(() => {}); }
+
+test('sync: lessons made on the laptop show up on the iPad, with the key, PIN and points; GitHub only sees locked data', async () => {
+  const gist = new FakeGist();
+  const { page: laptop, ids } = await freshWithLessons(['Topic Synced A', 'Topic Synced B']);
+  // An older save: the points log was trimmed, so it doesn't add up to her balance on its own.
+  await laptop.evaluate(ids => { ids.forEach(id => addToWeek(id, true)); S.points.balance = 500; S.points.earned = 650; save(); }, ids);
+  const code = await turnOnSync(laptop, gist);
+  ok((await text(laptop)).includes('Sync is on') && (await text(laptop)).includes('TUTOR1-'), 'Mom sees the setup code');
+  const stored = gist.latest('gist1');
+  ok(/^ATS1\./.test(stored), 'shared copy is locked');
+  for (const secret of ['Topic Synced', 'sk-ant', 'Aanya', GOOD_TOKEN]) ok(!stored.includes(secret), 'GitHub cannot read: ' + secret);
+  let ipad;
+  try {
+    ipad = await joinSync(gist, code);
+    const st = await S(ipad);
+    eq(st.week.core, ids, 'same week plan on the iPad');
+    eq(st.order.length, 2, 'both lessons');
+    eq(st.settings.apiKey, 'sk-ant-test-key', 'Claude key came along');
+    eq(st.settings.learnerName, 'Aanya', 'name came along');
+    eq([st.points.balance, st.points.earned], [500, 650], 'balance came along');
+    ok(!st.settings.sync.token.includes(' ') && st.settings.sync.device !== (await laptop.evaluate(() => S.settings.sync.device)), 'each device has its own id');
+    await momLogin(ipad); // the laptop's PIN works here
+    await kidLogin(ipad);
+    ok((await text(ipad)).includes('Topic Synced A'), 'Aanya sees the lesson');
+    // A join link opened in Safari fills the code in for her.
+    const third = await open();
+    await third.goto('about:blank');
+    await third.goto(FILE + '#join=' + encodeURIComponent(code));
+    eq(await third.evaluate(() => [view.name, $('#syncCode').value, location.hash]), ['join', code, ''], 'link opens Join with the code, and the code leaves the address bar');
+    await closeOther(third);
+    // A wrong code is refused and nothing is changed.
+    const bad = await open(); await gist.attach(bad);
+    await act(bad, 'go', 'join'); await bad.fill('#syncCode', 'TUTOR1-garbage'); await act(bad, 'syncJoin');
+    eq(await bad.evaluate(() => S.settings.sync), null, 'bad code: not joined');
+    await closeOther(bad);
+  } finally { await closeOther(ipad); }
+  return laptop;
+});
+
+test('sync: she finishes on the iPad while Mom accepts on both; points are never lost or doubled', async () => {
+  const gist = new FakeGist();
+  const { page: laptop, ids } = await freshWithLessons(['Topic One', 'Topic Two', 'Topic Three']);
+  await laptop.evaluate(ids => ids.forEach(id => addToWeek(id, true)), ids);
+  const code = await turnOnSync(laptop, gist);
+  let ipad;
+  try {
+    ipad = await joinSync(gist, code);
+    await kidLogin(ipad);
+    const r0 = await kidDoes(ipad, ids[0], { minutes: 12 });
+    await sync(ipad); await sync(laptop);
+    eq(await laptop.evaluate(() => [S.results.length, pendingPts()]), [1, r0.points], 'laptop sees the pending result');
+    // Both devices act before syncing again.
+    await laptop.evaluate(id => { A.acceptResult(id); FORMS.RW = { rname: 'Movie night', rpts: '300' }; A.redeemAdd(); }, r0.id);
+    await ipad.evaluate(id => A.acceptResult(id), r0.id);
+    await kidLogin(ipad);
+    const r1 = await kidDoes(ipad, ids[1], { minutes: 12 });
+    await sync(ipad); await sync(laptop); await sync(ipad);
+    for (const [name, p] of [['laptop', laptop], ['iPad', ipad]]) {
+      const st = await S(p);
+      eq(st.points.balance, r0.points, name + ': lesson 1 paid exactly once');
+      eq(st.points.log.filter(x => x.id === 'acc-' + r0.id).length, 1, name + ': one payment in the history');
+      eq(st.results.map(r => r.id).sort(), [r0.id, r1.id].sort(), name + ': both results kept');
+      eq(await p.evaluate(() => pendingPts()), r1.points, name + ': lesson 2 still waiting for Mom');
+      eq(st.redeemables.map(r => r.name), ['Movie night'], name + ': reward made on the laptop');
+    }
+    // Mom pays out on the laptop while accepting lesson 2 on the iPad.
+    await laptop.evaluate(() => go('rewards')); await laptop.fill('#payIn', '1'); await act(laptop, 'payOut');
+    await ipad.evaluate(id => A.acceptResult(id), r1.id);
+    await sync(laptop); await sync(ipad); await sync(laptop);
+    const want = r0.points + r1.points - 100;
+    eq(await laptop.evaluate(() => S.points.balance), want, 'laptop: both changes count');
+    eq(await ipad.evaluate(() => S.points.balance), want, 'iPad: both changes count');
+  } finally { await closeOther(ipad); }
+  return laptop;
+});
+
+test('sync: two devices saving at the same moment are combined, not overwritten', async () => {
+  const gist = new FakeGist();
+  const { page: laptop } = await freshWithLessons(['Topic Base']);
+  const code = await turnOnSync(laptop, gist);
+  let ipad;
+  try {
+    ipad = await joinSync(gist, code);
+    const [x] = await seedLessons(laptop, ['Topic Laptop']);
+    await laptop.evaluate(() => save());
+    await sync(laptop);
+    // The iPad read the shared copy just before the laptop's save landed, then saves its own change.
+    gist.staleOnce = true;
+    await ipad.evaluate(() => { S.redeemables.push({ id: 'r1', name: 'Ice cream', points: 200 }); save(); });
+    await sync(ipad);
+    eq(gist.byVersion, 1, 'iPad noticed the laptop wrote in between and fetched its copy');
+    await sync(laptop);
+    for (const [name, p] of [['laptop', laptop], ['iPad', ipad]]) {
+      const st = await S(p);
+      ok(!!st.lessons[x], name + ': lesson made on the laptop survived');
+      eq(st.redeemables.map(r => r.name), ['Ice cream'], name + ': reward made on the iPad survived');
+    }
+  } finally { await closeOther(ipad); }
+  return laptop;
+});
+
+test('sync: deleting on one device deletes on the other; a restored backup only adds', async () => {
+  const gist = new FakeGist();
+  const { page: laptop, ids } = await freshWithLessons(['Topic Keep', 'Topic Drop']);
+  const code = await turnOnSync(laptop, gist);
+  let ipad;
+  try {
+    ipad = await joinSync(gist, code);
+    await laptop.evaluate(id => { delete S.lessons[id]; S.order = S.order.filter(x => x !== id); save(); }, ids[1]);
+    await sync(laptop); await sync(ipad);
+    eq(await ipad.evaluate(() => S.order), [ids[0]], 'iPad: deleted lesson is gone');
+    // The iPad restores an old backup that still has the deleted lesson and is missing a new result.
+    await ipad.evaluate(() => { S.results.unshift({ id: 'res-new', lessonId: 'z', title: 'New', subject: 'math', at: Date.now(), points: 0, accepted: true }); save(); });
+    await sync(ipad); await sync(laptop);
+    await ipad.evaluate(([keep, drop]) => {
+      const old = JSON.parse(JSON.stringify(S)); old.results = []; old.order = [keep, drop]; old.lessons[drop] = JSON.parse(JSON.stringify(old.lessons[keep])); old.lessons[drop].id = drop;
+      S = Object.assign(DEFAULT_STATE(), old); syncForgetBase(); save(); // what importData does
+    }, ids);
+    await sync(ipad); await sync(laptop);
+    for (const [name, p] of [['laptop', laptop], ['iPad', ipad]]) {
+      const st = await S(p);
+      ok(st.results.some(r => r.id === 'res-new'), name + ': restore did not remove a newer result');
+      ok(st.order.includes(ids[1]), name + ': restore brought the old lesson back (adds only)');
+    }
+  } finally { await closeOther(ipad); }
+  return laptop;
+});
+
+test('sync: waits while she is in a lesson, then catches up', async () => {
+  const gist = new FakeGist();
+  const { page: laptop, ids } = await freshWithLessons(['Topic Now', 'Topic Later']);
+  await laptop.evaluate(id => addToWeek(id, true), ids[0]);
+  const code = await turnOnSync(laptop, gist);
+  let ipad;
+  try {
+    ipad = await joinSync(gist, code);
+    await kidLogin(ipad);
+    await ipad.evaluate(() => go('kidHome'));
+    await act(ipad, 'kidStart', ids[0]);
+    await laptop.evaluate(id => addToWeek(id, true), ids[1]);
+    await sync(laptop);
+    const before = gist.gets;
+    eq(await sync(ipad), false, 'no sync mid-lesson');
+    eq(gist.gets, before, 'did not even fetch');
+    await play(ipad, { minutes: 12 });
+    await sync(ipad);
+    eq((await S(ipad)).week.core, ids, 'after the lesson, the laptop’s new slot is there');
+    ok((await S(ipad)).results.length === 1 && (await S(laptop)).week.core.length === 2, 'her result kept, laptop plan kept');
+    await sync(laptop);
+    eq((await S(laptop)).results.length, 1, 'laptop gets her result');
+  } finally { await closeOther(ipad); }
+  return laptop;
+});
+
+test('sync: a deleted token is shown to Mom, and the app keeps working', async () => {
+  const gist = new FakeGist();
+  const { page: laptop, ids } = await freshWithLessons(['Topic Token']);
+  await turnOnSync(laptop, gist);
+  laptop.allowErrors = /401|ERR_INTERNET_DISCONNECTED|Failed to fetch/;
+  gist.token = 'revoked';
+  await sync(laptop);
+  await laptop.evaluate(() => go('momHome'));
+  ok((await text(laptop)).includes('Sync isn’t working: the GitHub token was deleted or expired'), 'Mom home says why');
+  await laptop.evaluate(id => addToWeek(id, true), ids[0]);
+  eq((await S(laptop)).week.core, ids, 'still works on this device');
+  // No internet is only mentioned after a day.
+  gist.token = GOOD_TOKEN; await sync(laptop);
+  await laptop.context().setOffline(true);
+  await sync(laptop);
+  await laptop.evaluate(() => go('momHome'));
+  ok(!(await text(laptop)).includes('Sync isn’t working'), 'a short time offline is not an alarm');
+  await laptop.context().setOffline(false);
+  // A bad token when turning sync on is explained.
+  const other = await open(); await gist.attach(other); await momSetup(other);
+  await other.evaluate(() => go('settings')); await other.fill('[data-bind="SY:token"]', 'nope');
+  const msgs = []; other.removeAllListeners('dialog'); other.on('dialog', d => { msgs.push(d.message()); d.accept(); });
+  await act(other, 'syncStart'); await other.waitForTimeout(300);
+  ok(msgs.some(m => /token was deleted or expired/.test(m)), 'bad token explained: ' + msgs.join(' | '));
+  await closeOther(other);
+  return laptop;
+});
+
+test('sync: changes go up by themselves a moment after saving', async () => {
+  const gist = new FakeGist();
+  const { page } = await freshWithLessons(['Topic Auto']);
+  await turnOnSync(page, gist);
+  await page.evaluate(() => { S.settings.sync.auto = true; save(); });
+  const n = gist.gists.gist1.versions.length;
+  await seedLessons(page, ['Topic Auto Two']);
+  await page.evaluate(() => save());
+  for (let i = 0; i < 40 && gist.gists.gist1.versions.length === n; i++) await page.waitForTimeout(100);
+  ok(gist.gists.gist1.versions.length > n, 'saved to the shared copy without tapping anything');
+  return page;
+});
+
+test('sync: merge rules (append-only results and ledger, deletions, lists)', async () => {
+  const page = await open();
+  const r = await page.evaluate(() => {
+    const b = { results: [{ id: 'a', at: 1 }], order: ['x', 'y'], lessons: { x: { t: 1 }, y: { t: 1 } }, points: { log: [{ id: 'p1', t: 1, n: 5 }] } };
+    const l = { results: [{ id: 'b', at: 2 }], order: ['x'], lessons: { x: { t: 2 } }, points: { log: [{ id: 'p1', t: 1, n: 5 }, { id: 'p2', t: 2, n: 7 }] } };
+    const rr = { results: [{ id: 'a', at: 1, accepted: true }], order: ['x', 'y', 'z'], lessons: { x: { t: 1 }, y: { t: 1 }, z: { t: 3 } }, points: { log: [{ id: 'p2', t: 2, n: 7 }, { id: 'p3', t: 3, n: -2 }] } };
+    return merge3(b, l, rr, '', 'l');
+  });
+  eq(r.results.map(x => x.id), ['b', 'a'], 'results never removed by the other side');
+  eq(r.results[1].accepted, true, 'change to a kept result applied');
+  eq(r.order, ['x', 'z'], 'y deleted on one side, z added on the other');
+  eq(Object.keys(r.lessons).sort(), ['x', 'z'], 'lessons follow');
+  eq(r.lessons.x.t, 2, 'edit kept');
+  eq(r.points.log.map(x => x.id), ['p1', 'p2', 'p3'], 'ledger: union by id, no duplicates');
+  return page;
+});
+
 /* ---------------- runner ---------------- */
 (async () => {
   const filter = process.argv[2] ? new RegExp(process.argv[2], 'i') : null;

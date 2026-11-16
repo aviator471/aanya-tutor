@@ -336,7 +336,7 @@ const CONFIG = {
   WEEK_MIN_MINUTES: 8,           // a finished lesson counts toward the week only with at least this much real work
   WEEK_BONUS: 2,                 // bonus slots Mom can add after the 3 (they unlock once 3 are done)
   BONUS_MULT: 2,                 // a bonus lesson's base points are multiplied by this
-  VERSION: 'v16 · 16 Nov',        // shown on the first screen so you can tell which copy you are running
+  VERSION: 'v17 · 16 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -559,8 +559,10 @@ function load() {
     S.streak = Object.assign(DEFAULT_STATE().streak, d.streak || {});
   } catch (e) { S = DEFAULT_STATE(); }
 }
+const SYNC_APPLYING = () => typeof SYNC !== 'undefined' && SYNC.applying;
 function save() {
-  try { localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(S)); }
+  if (!SYNC_APPLYING()) S.savedAt = Date.now();
+  try { localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(S)); if (typeof syncSoon === 'function') syncSoon(); }
   catch (e) { toast('The iPad storage for this app is full. Save a backup, then delete old lessons.'); }
 }
 const kidName = () => S.settings.learnerName || 'Learner';
@@ -626,6 +628,7 @@ VIEWS.gate = () => `
     <button class="gate mom" data-a="pickMom"><span class="av">👩</span>Mom</button>
     <button class="gate kid" data-a="pickKid"><span class="av">🧒</span>${esc(kidName())}</button>
   </div>
+  ${!S.settings.pin && !S.settings.sync ? `<button class="link" style="margin-top:28px" data-a="go" data-v="join">Already set up on another device? Join it</button>` : ''}
   <p class="muted" style="margin-top:36px"><small>${esc(CONFIG.VERSION)}</small></p>
 </div>`;
 A.pickKid = () => { role = 'kid'; go('kidHome'); };
@@ -1001,9 +1004,10 @@ VIEWS.momHome = () => {
   const hr = new Date().getHours(), hi = hr < 12 ? 'Good morning' : hr < 17 ? 'Good afternoon' : 'Good evening';
   const strip = [
     !S.settings.apiKey ? ['Add your Claude key to make lessons', 'settings', 'Add'] : null,
+    syncTrouble() ? ['Sync isn’t working: ' + syncTrouble(), 'settings', 'Fix'] : null,
     pend.length ? [`${pend.length} result${pend.length > 1 ? 's' : ''} to check`, 'results', 'View'] : null,
     flags.length ? [`${flags.length} flagged question${flags.length > 1 ? 's' : ''}`, 'flags', 'View'] : null,
-    needBackup ? ['New week: save a backup (one tap)', 'exportData', 'Save'] : null,
+    needBackup && !syncHealthy() ? ['New week: save a backup (one tap)', 'exportData', 'Save'] : null,
     (() => { const W = ensureWeek(), n = CONFIG.WEEK_GOAL - W.core.length; return n > 0 && !W.brk ? [`This week’s plan needs ${n} more lesson${n === 1 ? '' : 's'}`, 'lessons', 'Add'] : null; })(),
   ].filter(Boolean);
   const tile = k => { const x = subjStats(k); return `<button class="tile s-${k}" data-a="go" data-v="report">${ringSvg(x.total ? Math.max(x.covered / x.total, x.covered ? 0.06 : 0) : 0, '', SUBJECTS[k].emoji)}<div><b>${SUBJECTS[k].label}</b><span class="${x.mastery != null && x.mastery < REDO_BELOW ? 'low' : ''}">${x.mastery == null ? 'No score yet' : x.mastery + '% lately'}</span><small>${x.covered} of ${x.total} topics</small></div></button>`; };
@@ -2367,7 +2371,13 @@ A.explainDiff = async i => {
 };
 
 /* ---------- finish: points, streak, results for Mom ---------- */
-function addPoints(n, why) { if (!n) return; S.points.balance += n; S.points.earned += Math.max(0, n); S.points.log.push({ t: Date.now(), n, why }); if (S.points.log.length > 400) S.points.log.splice(0, 100); }
+/* Every change to points is one ledger entry with an id. The log is never trimmed: sync merges the two
+   devices' ledgers by id, so a payment made on both (same id) counts once and none is ever lost. */
+function addPoints(n, why, id) {
+  if (!n) return; id = id || uid();
+  if (S.points.log.some(x => x.id === id)) return;
+  S.points.balance += n; S.points.earned += Math.max(0, n); S.points.log.push({ id, t: Date.now(), n, why });
+}
 function bumpStreak() {
   const t = todayStr(), s = S.streak;
   if (s.last === t) return 0;
@@ -2511,7 +2521,7 @@ ${r.flagged.length ? `<h3>She flagged</h3><div class="card"><ul>${r.flagged.map(
 };
 A.openResult = id => go('result', { id });
 const pendingPts = () => S.results.filter(r => r.pending && !r.accepted).reduce((t, r) => t + (r.points || 0), 0);
-function acceptOne(r) { if (!r || r.accepted) return; r.accepted = true; if (r.pending) { addPoints(r.points, 'Lesson: ' + r.title); r.pending = false; } }
+function acceptOne(r) { if (!r || r.accepted) return; r.accepted = true; if (r.pending) { addPoints(r.points, 'Lesson: ' + r.title, 'acc-' + r.id); r.pending = false; } }
 A.acceptResult = id => { acceptOne(S.results.find(x => x.id === id)); save(); toast('Accepted ✓'); render(); };
 A.acceptAll = () => { const n = S.results.filter(r => !r.accepted).length; S.results.filter(r => !r.accepted).forEach(acceptOne); save(); toast(`Accepted ${n} ✓`); render(); };
 A.rejectResult = id => { const r = S.results.find(x => x.id === id); if (!r || r.accepted || !confirm('Don’t pay the points for this lesson?')) return; r.accepted = true; r.pending = false; r.rejected = true; save(); toast('Not paid.'); render(); };
@@ -2567,14 +2577,14 @@ A.payOut = () => {
   if (!confirm(`Take ${pts} points (${money(d)}) from ${kidName()}?`)) return;
   addPoints(-pts, 'Paid out ' + money(d)); save(); toast('Done. ' + S.points.balance + ' points left.'); render();
 };
-A.saveRate = () => { const v = Math.round(+$('#rateIn').value), old = S.settings.rate || 100; if (v >= 1 && v !== old) { S.settings.rate = v; S.points.log.push({ t: Date.now(), n: 0, why: `Rate changed: ${old} → ${v} points per $1` }); save(); toast('Saved.'); render(); } };
+A.saveRate = () => { const v = Math.round(+$('#rateIn').value), old = S.settings.rate || 100; if (v >= 1 && v !== old) { S.settings.rate = v; S.points.log.push({ id: uid(), t: Date.now(), n: 0, why: `Rate changed: ${old} → ${v} points per $1` }); save(); toast('Saved.'); render(); } };
 A.goalAdd = () => { const n = str(FORMS.RW.goal), p = +FORMS.RW.price; if (!n || !(p > 0)) { toast('Add a name and a price.'); return; } S.goals.push({ id: uid(), name: n, price: Math.round(p * 100) / 100, done: false }); FORMS.RW.goal = ''; FORMS.RW.price = ''; save(); render(); };
 A.goalDel = id => { S.goals = S.goals.filter(g => g.id !== id); save(); render(); };
 A.goalBought = id => {
   const g = S.goals.find(x => x.id === id), cost = Math.round(g.price * (S.settings.rate || 100));
   if (S.points.balance < cost && !confirm(`She has ${S.points.balance} of ${cost} points. Mark it bought anyway? Her balance will go to 0.`)) return;
   if (S.points.balance >= cost && !confirm(`Take ${cost} points for “${g.name}”?`)) return;
-  addPoints(-Math.min(cost, S.points.balance), 'Bought: ' + g.name); g.done = true; save(); render();
+  addPoints(-Math.min(cost, S.points.balance), 'Bought: ' + g.name, 'goal-' + g.id); g.done = true; save(); render();
 };
 A.redeemAdd = () => { const n = str(FORMS.RW.rname), p = Math.round(+FORMS.RW.rpts); if (!n || !(p > 0)) { toast('Add a reward and points.'); return; } S.redeemables.push({ id: uid(), name: n, points: p }); FORMS.RW.rname = ''; FORMS.RW.rpts = ''; save(); render(); };
 A.redeemDel = id => { S.redeemables = S.redeemables.filter(r => r.id !== id); save(); render(); };
@@ -2592,7 +2602,7 @@ VIEWS.settings = () => {
 <div class="topbar"><span class="who">Settings</span><span></span></div>
 <div class="card"><ul class="list"><li class="item" data-a="go" data-v="rewards" style="cursor:pointer"><div class="grow t">🎁 Rewards &amp; points</div><span class="muted">›</span></li><li class="item" data-a="go" data-v="flags" style="cursor:pointer"><div class="grow t">🚩 Flagged questions</div><span class="muted">›</span></li></ul></div>
 <div class="card"><h2>Claude key</h2>
-<p class="muted">${k ? `Saved on this iPad (ends in …${esc(k.slice(-4))}).` : 'Not added yet. Get one at console.anthropic.com → API Keys.'}</p>
+<p class="muted">${k ? `Saved on this ${S.settings.sync ? 'device and shared with your synced devices' : 'iPad'} (ends in …${esc(k.slice(-4))}).` : 'Not added yet. Get one at console.anthropic.com → API Keys.'}</p>
 <input data-bind="ST:key" type="password" placeholder="${k ? 'Paste a new key to replace it' : 'sk-ant-...'}" autocomplete="off">
 <div class="row" style="margin-top:10px"><button class="ghost" data-a="saveKey">Save key</button>${k ? `<button class="ghost" data-a="testKey">Test it</button>` : ''}</div>
 <p class="muted"><small>Lessons use ${esc(CONFIG.AUTHOR_MODEL)}. “Explain it differently” uses ${esc(CONFIG.EXPLAIN_MODEL)}.</small></p>
@@ -2600,6 +2610,7 @@ VIEWS.settings = () => {
 <div class="card"><h2>Learner</h2><label>First name</label><div class="row"><input data-bind="ST:name" value="${esc(S.settings.learnerName)}"><button class="ghost" style="flex:0" data-a="saveName">Save</button></div></div>
 <div class="card"><h2>Backup</h2><p class="muted">Saves lessons, progress, points and goals to a file (not the key or PIN). ${S.settings.lastExport ? 'Last backup: ' + fmtDate(S.settings.lastExport) + '.' : ''}</p>
 <div class="row"><button class="ghost" data-a="exportData">💾 Save a backup</button><label class="ghost" style="margin:0;text-align:center;cursor:pointer;display:flex;align-items:center;justify-content:center">📂 Restore<input id="importFile" type="file" accept="application/json,.json" style="display:none"></label></div></div>
+${syncCard()}
 <div class="card"><h2>PIN</h2><button class="ghost" data-a="changePin">Change Mom PIN</button></div>
 ${!isStandalone() ? `<div class="card"><h2>Keep progress safe</h2><p>On the iPad, tap Share → <b>Add to Home Screen</b> and open the app from that icon. Safari can erase website data after about a week without a visit; the Home Screen app is protected. The icon starts empty, so save a backup here first and restore it there.</p></div>` : ''}
 <div class="card"><h2>Start over</h2><button class="ghost danger" data-a="eraseAll">Erase everything on this iPad</button></div>`;
@@ -2614,13 +2625,13 @@ A.testKey = async (_, el) => {
 A.saveName = () => { S.settings.learnerName = str(FORMS.ST.name); save(); toast('Saved.'); };
 A.changePin = () => { pinBuf = ''; go('pin', { mode: 'set1', change: true }); };
 A.eraseAll = () => {
-  if (prompt('This deletes all lessons, progress and points on this iPad. Type ERASE to confirm.') !== 'ERASE') return;
-  localStorage.removeItem(CONFIG.STORAGE_KEY); load(); role = null; GEN = null; go('gate');
+  if (prompt('This deletes all lessons, progress and points on this device (other synced devices keep theirs, and this one stops syncing). Type ERASE to confirm.') !== 'ERASE') return;
+  localStorage.removeItem(CONFIG.STORAGE_KEY); syncForgetBase(); load(); role = null; GEN = null; go('gate');
 };
 A.exportData = () => {
   const rate = S.settings.rate || 100, owed = money(S.points.balance / rate);
   const summary = `${kidName()} · ${todayStr()} · balance ${S.points.balance} points (${owed} at ${rate} per $1) · ${pendingPts()} points waiting · ${S.results.length} lessons done`;
-  const data = Object.assign({ summary, app: 'g5-tutor', exportedAt: new Date().toISOString() }, S, { settings: Object.assign({}, S.settings, { apiKey: '', pin: null, pinFails: 0, pinLockUntil: 0 }), attempt: null });
+  const data = Object.assign({ summary, app: 'g5-tutor', exportedAt: new Date().toISOString() }, S, { settings: Object.assign({}, S.settings, { apiKey: '', pin: null, pinFails: 0, pinLockUntil: 0, sync: null }), attempt: null });
   const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
   const url = URL.createObjectURL(blob), a = document.createElement('a');
   a.href = url; a.download = `tutor-backup-${todayStr()}-balance-${owed.replace('$', '')}.json`; document.body.appendChild(a); a.click();
@@ -2634,16 +2645,282 @@ function importData(file) {
       const d = JSON.parse(r.result);
       if (!d || !d.lessons || !d.settings || !d.points) throw new Error('bad');
       if (!confirm('Replace everything on this iPad with this backup?')) return;
-      const keep = { apiKey: S.settings.apiKey, pin: S.settings.pin };
+      const keep = { apiKey: S.settings.apiKey, pin: S.settings.pin, sync: S.settings.sync || null };
       delete d.app; delete d.exportedAt; delete d.summary;
       S = Object.assign(DEFAULT_STATE(), d);
-      S.settings = Object.assign(DEFAULT_STATE().settings, d.settings, { apiKey: keep.apiKey || '', pin: keep.pin || d.settings.pin || null, welcomed: true });
+      S.settings = Object.assign(DEFAULT_STATE().settings, d.settings, { apiKey: keep.apiKey || '', pin: keep.pin || d.settings.pin || null, welcomed: true, sync: keep.sync });
+      syncForgetBase(); // a restore is combined with the shared copy, never used to delete things on other devices
       S.points = Object.assign(DEFAULT_STATE().points, d.points); S.streak = Object.assign(DEFAULT_STATE().streak, d.streak || {});
       save(); toast('Restored ✓'); go('momHome');
     } catch (e) { toast('That file isn’t a backup from this app.'); }
   };
   r.readAsText(file);
 }
+
+/* ==================================================================
+   Sync between devices (laptop <-> iPad)
+   The whole app state is locked (AES-GCM, key never leaves the devices) and kept in one
+   secret GitHub gist. Each device keeps its own copy plus the last shared copy ("base"), and
+   combines changes field by field (three-way merge), so edits on both devices are kept.
+   Results, the points ledger and the assignment log are append-only: a sync never removes
+   or doubles an entry. Balances are re-added from the ledger after every merge.
+   ================================================================== */
+const SYNC_FILE = 'tutor-sync.txt', SYNC_BASE_KEY = CONFIG.STORAGE_KEY + '.syncbase';
+const SYNC_LOCAL = ['pinFails', 'pinLockUntil', 'lastExport', 'welcomed', 'sync', 'createdAt'];
+var SYNC = { busy: false, again: false, timer: null, poll: null, state: '', err: '', applying: false };
+const sjson = v => v === undefined ? '~' : JSON.stringify(v, (k, x) => x && typeof x === 'object' && !Array.isArray(x) ? Object.keys(x).sort().reduce((o, kk) => (o[kk] = x[kk], o), {}) : x);
+const same = (a, b) => sjson(a) === sjson(b);
+const isObj = x => !!x && typeof x === 'object' && !Array.isArray(x);
+const APPEND = { 'points.log': x => x.id || 'h' + sjson([x.t, x.n, x.why]), results: x => x.id, assignLog: x => x.id + '@' + x.at };
+const SETS = ['order', 'week.core', 'week.bonus', 'breaks'];
+function merge3(b, l, r, path, newer) {
+  if (same(l, r)) return l;
+  if (APPEND[path]) return mergeAppend(b, l, r, path, newer);
+  if (same(b, l)) return r;
+  if (same(b, r)) return l;
+  if (l === undefined) return r;   // deleted on one side, changed on the other: keep the change
+  if (r === undefined) return l;
+  if (isObj(l) && isObj(r)) {
+    const bo = isObj(b) ? b : {}, out = {};
+    new Set([...Object.keys(l), ...Object.keys(r)]).forEach(k => { const v = merge3(bo[k], l[k], r[k], path ? path + '.' + k : k, newer); if (v !== undefined) out[k] = v; });
+    return out;
+  }
+  if (Array.isArray(l) && Array.isArray(r)) {
+    const ba = Array.isArray(b) ? b : [];
+    if (SETS.includes(path)) {
+      const inL = new Set(l.map(sjson)), inR = new Set(r.map(sjson)), inB = new Set(ba.map(sjson)), out = [], seen = new Set();
+      [...l, ...r].forEach(x => { const k = sjson(x); if (seen.has(k)) return; seen.add(k); if (inB.has(k) && (!inL.has(k) || !inR.has(k))) return; out.push(x); });
+      return out;
+    }
+    const ids = a => a.every(x => isObj(x) && x.id != null) && new Set(a.map(x => x.id)).size === a.length;
+    if (ids(l) && ids(r) && ids(ba)) {
+      const bm = new Map(ba.map(x => [x.id, x])), lm = new Map(l.map(x => [x.id, x])), rm = new Map(r.map(x => [x.id, x])), out = [];
+      [...new Set([...l.map(x => x.id), ...r.map(x => x.id)])].forEach(id => { const v = merge3(bm.get(id), lm.get(id), rm.get(id), path + '[]', newer); if (v !== undefined) out.push(v); });
+      return out;
+    }
+  }
+  return newer === 'l' ? l : r;
+}
+function mergeAppend(b, l, r, path, newer) {
+  const key = APPEND[path], bm = new Map((b || []).map(x => [key(x), x])), out = new Map();
+  (l || []).forEach(x => out.set(key(x), x));
+  (r || []).forEach(x => { const k = key(x); out.set(k, out.has(k) ? merge3(bm.get(k), out.get(k), x, path + '[]', newer) : x); });
+  const a = [...out.values()];
+  if (path === 'results') { a.sort((x, y) => y.at - x.at); return a.slice(0, 600); }
+  return a.sort((x, y) => (x.t ?? x.at ?? 0) - (y.t ?? y.at ?? 0));
+}
+// What gets shared: everything except this device's own bits and numbers worked out from the ledger.
+function syncData(st) {
+  const d = JSON.parse(JSON.stringify(st));
+  delete d.attempt; delete d.savedAt;
+  SYNC_LOCAL.forEach(k => delete d.settings[k]);
+  if (d.points) { delete d.points.balance; delete d.points.earned; }
+  return d;
+}
+// Old saves have no ids in the points log and a trimmed log. Give entries ids and add one
+// "balance before sync" entry so the ledger adds up to what she already has.
+function ledgerFix() {
+  let changed = false;
+  S.points.log.forEach(x => { if (!x.id) { x.id = 'h' + sjson([x.t, x.n, x.why]); changed = true; } });
+  const t = ledgerTotals(S.points.log), db = S.points.balance - t.balance, de = S.points.earned - t.earned;
+  if (db || de) { S.points.log.unshift({ id: 'carry-' + uid(), t: 0, n: db, e: de, why: 'Points from before sync' }); changed = true; }
+  return changed;
+}
+function ledgerTotals(log) { return log.reduce((a, x) => ({ balance: a.balance + (x.n || 0), earned: a.earned + (x.e != null ? x.e : Math.max(0, x.n || 0)) }), { balance: 0, earned: 0 }); }
+function applyShared(m) {
+  const keepSettings = {}; SYNC_LOCAL.forEach(k => keepSettings[k] = S.settings[k]);
+  const attempt = S.attempt, savedAt = S.savedAt;
+  Object.keys(S).forEach(k => { if (!(k in m)) delete S[k]; });
+  Object.assign(S, JSON.parse(JSON.stringify(m)));
+  const D = DEFAULT_STATE();
+  Object.keys(D).forEach(k => { if (S[k] === undefined) S[k] = D[k]; });
+  S.settings = Object.assign(D.settings, S.settings, keepSettings);
+  S.points = Object.assign({ log: [] }, S.points, ledgerTotals(S.points.log || []));
+  // A lesson paid on one device and refused on the other: the payment stands, so show it as paid.
+  const paid = new Set(S.points.log.map(x => x.id));
+  S.results.forEach(r => { if (r.rejected && paid.has('acc-' + r.id)) delete r.rejected; });
+  S.attempt = attempt; S.savedAt = savedAt;
+  SYNC.applying = true; save(); SYNC.applying = false;
+}
+// ---- locking (encryption) ----
+const b64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); };
+const unb64 = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), c => c.charCodeAt(0));
+async function pipeBytes(u8, stream) { return new Uint8Array(await new Response(new Blob([u8]).stream().pipeThrough(stream)).arrayBuffer()); }
+const cryptoKey = k => crypto.subtle.importKey('raw', unb64(k), 'AES-GCM', false, ['encrypt', 'decrypt']);
+async function seal(obj, k) {
+  let bytes = new TextEncoder().encode(JSON.stringify(obj)), z = 'n';
+  if (typeof CompressionStream === 'function') { bytes = await pipeBytes(bytes, new CompressionStream('gzip')); z = 'z'; }
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, await cryptoKey(k), bytes));
+  return ['ATS1', z, b64(iv), b64(ct)].join('.');
+}
+async function unseal(txt, k) {
+  const [tag, z, iv, ct] = str(txt).split('.');
+  if (tag !== 'ATS1') throw new Error('notours');
+  let bytes;
+  try { bytes = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, await cryptoKey(k), unb64(ct))); }
+  catch (e) { throw new Error('badkey'); }
+  if (z === 'z') bytes = await pipeBytes(bytes, new DecompressionStream('gzip'));
+  return JSON.parse(new TextDecoder().decode(bytes));
+}
+// ---- GitHub gist ----
+async function gh(method, p, body, token) {
+  let res;
+  try {
+    res = await fetch('https://api.github.com' + p, { method, cache: 'no-store', body: body ? JSON.stringify(body) : undefined,
+      headers: Object.assign({ Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' }, body ? { 'Content-Type': 'application/json' } : {}) });
+  } catch (e) { throw new Error('offline'); }
+  if (res.status === 401) throw new Error('token');
+  if (res.status === 403 || res.status === 404) throw new Error(res.status === 404 ? 'gone' : 'perm');
+  if (!res.ok) throw new Error('http' + res.status);
+  return res.json();
+}
+async function gistText(g, token) {
+  const f = g.files && g.files[SYNC_FILE];
+  if (!f) return '';
+  if (!f.truncated) return f.content;
+  const r = await fetch(f.raw_url, { cache: 'no-store' }); if (!r.ok) throw new Error('http' + r.status); return r.text();
+}
+const SYNC_ERR = { offline: 'no internet right now', token: 'the GitHub token was deleted or expired', perm: 'the GitHub token can’t use gists (it needs Gists: Read and write)', gone: 'the shared copy was deleted on GitHub, or the token can’t see it', badkey: 'this setup code doesn’t match the shared copy', notours: 'that gist isn’t this app’s shared copy', code: 'that setup code isn’t complete. Copy the whole thing again' };
+const syncMsg = e => SYNC_ERR[e && e.message] || 'GitHub didn’t answer (' + ((e && e.message) || 'error') + ')';
+const loadBase = () => { try { return JSON.parse(localStorage.getItem(SYNC_BASE_KEY) || 'null'); } catch (e) { return null; } };
+const saveBase = b => { try { localStorage.setItem(SYNC_BASE_KEY, JSON.stringify(b)); } catch (e) {} };
+function syncForgetBase() { try { localStorage.removeItem(SYNC_BASE_KEY); } catch (e) {} }
+function syncBlocked() { return !!S.attempt || ['edit', 'newLesson', 'generating', 'pin'].includes(view.name) || (typeof GEN !== 'undefined' && GEN && GEN.status === 'running') || (typeof WRITING_STEP !== 'undefined' && WRITING_STEP); }
+function syncSoon() { if (SYNC.applying || !S.settings.sync || !S.settings.sync.auto) return; clearTimeout(SYNC.timer); SYNC.timer = setTimeout(() => syncNow(), 1500); }
+function syncStamp(err) {
+  const c = S.settings.sync; if (!c) return;
+  if (err) { c.err = err; c.errAt = c.errAt || Date.now(); } else { c.last = Date.now(); c.err = ''; c.errAt = 0; }
+  SYNC.applying = true; save(); SYNC.applying = false;
+}
+// Trouble worth telling Mom about: a real problem, or no internet for a day.
+const syncTrouble = () => { const c = S.settings.sync; return c && c.err && (c.err !== SYNC_ERR.offline || Date.now() - (c.errAt || 0) > 864e5) ? c.err : ''; };
+const syncHealthy = () => { const c = S.settings.sync; return !!(c && !c.err && c.last && Date.now() - c.last < 7 * 864e5); };
+async function syncNow({ prefer } = {}) {
+  const c = S.settings.sync;
+  if (!c) return false;
+  if (SYNC.busy || syncBlocked()) { SYNC.again = true; return false; }
+  SYNC.busy = true; SYNC.again = false;
+  let changed = false;
+  try {
+    if (ledgerFix()) { SYNC.applying = true; save(); SYNC.applying = false; }
+    const g = await gh('GET', '/gists/' + c.gist, null, c.token);
+    let txt = await gistText(g, c.token), ver = g.history && g.history[0] && g.history[0].version;
+    const base = loadBase(), dev = c.device;
+    if (base && base.ver === ver && same(syncData(S), base.data)) { syncStamp(); return false; } // nothing new either way
+    let common = base ? base.data : {};
+    for (let tries = 0; tries < 4; tries++) {
+      const remote = txt ? await unseal(txt, c.key) : null;
+      if (syncBlocked()) { SYNC.again = true; return changed; } // she started a lesson while we were online
+      const local = syncData(S);
+      const newer = prefer || (remote && (remote.at || 0) > (S.savedAt || 0) ? 'r' : 'l');
+      const merged = remote ? merge3(common, local, remote.data, '', newer) : local;
+      if (!same(merged, local)) { applyShared(merged); changed = true; }
+      if (remote && same(merged, remote.data)) { saveBase({ ver, data: merged }); break; }
+      const res = await gh('PATCH', '/gists/' + c.gist, { files: { [SYNC_FILE]: { content: await seal({ at: Date.now(), dev, data: merged }, c.key) } } }, c.token);
+      const h = res.history || [];
+      if (!ver || !h[1] || h[1].version === ver) { saveBase({ ver: h[0] && h[0].version, data: merged }); break; }
+      // Another device wrote between our read and our write. Our write replaced theirs, so fetch
+      // theirs and combine again (nothing is lost: both copies still exist in the gist history).
+      const other = await gh('GET', '/gists/' + c.gist + '/' + h[1].version, null, c.token);
+      txt = await gistText(other, c.token); ver = h[0].version;
+    }
+    syncStamp();
+    if (changed && !syncBlocked() && !['play', 'settings'].includes(view.name) && !(document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) render();
+    return changed;
+  } catch (e) {
+    syncStamp(syncMsg(e)); if (view.name === 'settings' || view.name === 'momHome') render();
+    return false;
+  } finally {
+    SYNC.busy = false;
+    if (SYNC.again && !syncBlocked()) { SYNC.again = false; syncSoon(); }
+  }
+}
+// ---- setup codes ----
+const setupCode = c => 'TUTOR1-' + b64(new TextEncoder().encode(JSON.stringify({ g: c.gist, t: c.token, k: c.key })));
+function readCode(txt) {
+  const m = str(txt).replace(/\s+/g, '').match(/TUTOR1-([A-Za-z0-9_-]+)/);
+  try { const o = JSON.parse(new TextDecoder().decode(unb64(m[1]))); if (o.g && o.t && o.k) return o; } catch (e) {}
+  throw new Error('code');
+}
+const joinLink = c => location.href.split('#')[0] + '#join=' + setupCode(c);
+A.syncStart = async (_, el) => {
+  const token = str(FORMS.SY && FORMS.SY.token);
+  if (!token) { toast('Paste the GitHub token first.'); return; }
+  el.disabled = true; el.textContent = 'Turning on…';
+  try {
+    const key = b64(crypto.getRandomValues(new Uint8Array(32)));
+    ledgerFix();
+    const data = syncData(S);
+    const g = await gh('POST', '/gists', { description: 'Tutor app sync (locked, unreadable without the setup code)', public: false, files: { [SYNC_FILE]: { content: await seal({ at: Date.now(), dev: 'x', data }, key) } } }, token);
+    S.settings.sync = { gist: g.id, token, key, device: uid(), auto: true, last: Date.now(), err: '' };
+    saveBase({ ver: g.history && g.history[0] && g.history[0].version, data });
+    SYNC.showCode = true; FORMS.SY.token = ''; save(); toast('Sync is on ✓'); render(); syncPoll();
+  } catch (e) { alert('Couldn’t turn on sync: ' + syncMsg(e) + '.'); el.disabled = false; el.textContent = 'Turn on sync'; }
+};
+async function syncJoin(code) {
+  const o = readCode(code), g = await gh('GET', '/gists/' + o.g, null, o.t), txt = await gistText(g, o.t);
+  if (!txt) throw new Error('notours');
+  const remote = await unseal(txt, o.k);
+  S.settings.sync = { gist: o.g, token: o.t, key: o.k, device: uid(), auto: true, last: 0, err: '' };
+  syncForgetBase(); save(); // no shared history yet: anything already on this device is combined, never dropped
+  await syncNow({ prefer: 'r' });
+  if (S.settings.sync.err) throw new Error(S.settings.sync.err);
+  S.settings.welcomed = true; save(); syncPoll();
+  return remote;
+}
+A.syncJoin = async (_, el) => {
+  const code = str($('#syncCode') && $('#syncCode').value);
+  if (!code) { toast('Paste the setup code first.'); return; }
+  const has = S.order.length + S.results.length;
+  if (has && !confirm(`This device already has ${S.order.length} lessons and ${S.results.length} results. They’ll be combined with the shared copy. Go ahead?`)) return;
+  el.disabled = true; el.textContent = 'Joining…';
+  try { await syncJoin(code); toast('Joined ✓ Everything from your other device is here.'); role = null; go('gate'); }
+  catch (e) { S.settings.sync = null; syncForgetBase(); save(); alert('Couldn’t join: ' + (SYNC_ERR[e.message] ? syncMsg(e) : e.message) + '.'); el.disabled = false; el.textContent = 'Join'; }
+};
+A.syncNowBtn = async (_, el) => { el.disabled = true; el.textContent = 'Syncing…'; await syncNow(); toast(S.settings.sync.err ? 'Couldn’t sync: ' + S.settings.sync.err : 'Synced ✓'); render(); };
+A.syncShowCode = () => { SYNC.showCode = !SYNC.showCode; render(); };
+A.syncCopy = async () => { try { await navigator.clipboard.writeText(setupCode(S.settings.sync)); toast('Copied. Paste it on the other device.'); } catch (e) { $('#syncOut').select(); toast('Select and copy the code.'); } };
+A.syncStop = () => {
+  if (!confirm('Stop syncing on this device? Everything stays here, it just won’t share changes any more. Other devices keep syncing.')) return;
+  S.settings.sync = null; syncForgetBase(); save(); render();
+};
+const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : fmtDate(t); };
+function syncCard() {
+  const c = S.settings.sync;
+  FORMS.SY = FORMS.SY || { token: '' };
+  if (!c) return `<div class="card"><h2>📱 Use on more devices</h2>
+<p class="muted">Make lessons on your laptop and have them show up on the iPad. Lessons, the week plan, progress, points, the PIN and the Claude key are shared. They are locked before they leave this device, so GitHub can’t read them.</p>
+<p><b>Start here, on one device:</b></p>
+<ol class="muted" style="padding-left:20px;margin-top:0"><li>Open <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub → new fine-grained token</a>.</li><li>Name it “Tutor sync”. Under <b>Permissions → Account → Gists</b>, choose <b>Read and write</b>. Nothing else. (A classic token with only the <b>gist</b> box ticked works too.)</li><li>Generate it, copy it, and paste it here.</li></ol>
+<input data-bind="SY:token" type="password" placeholder="github_pat_..." autocomplete="off">
+<div class="row" style="margin-top:10px"><button class="ghost" data-a="syncStart">Turn on sync</button></div>
+<p style="margin-top:18px"><b>Already on another device?</b> Paste its setup code (Settings → Use on more devices → Show setup code).</p>
+<textarea id="syncCode" rows="2" placeholder="TUTOR1-..." autocomplete="off"></textarea>
+<div class="row" style="margin-top:10px"><button class="ghost" data-a="syncJoin">Join</button></div></div>`;
+  return `<div class="card"><h2>📱 Use on more devices</h2>
+<p>${c.err ? `<span style="color:var(--danger)">⚠️ Couldn’t sync: ${esc(c.err)}.</span>` : `✓ Sync is on. ${c.last ? 'Last synced ' + ago(c.last) + '.' : ''}`}</p>
+<div class="row"><button class="ghost" data-a="syncNowBtn">Sync now</button><button class="ghost" data-a="syncShowCode">${SYNC.showCode ? 'Hide' : 'Show'} setup code</button></div>
+${SYNC.showCode ? `<p class="muted" style="margin-top:14px">On the other device, open the app, tap <b>“Already set up on another device? Join it”</b> on the first screen (or Settings → Use on more devices), and paste this. On the iPad, do it <b>inside the Home Screen icon</b>: it keeps its own copy, separate from Safari.</p>
+<textarea id="syncOut" rows="3" readonly>${esc(setupCode(c))}</textarea>
+<div class="row" style="margin-top:10px"><button class="ghost" data-a="syncCopy">Copy code</button></div>
+<p class="muted"><small>🔐 Treat this code like a password: it opens the shared copy. If a device is lost, delete the token at github.com → Settings → Developer settings → Personal access tokens, then turn sync on again here.</small></p>` : ''}
+<button class="link" data-a="syncStop">Stop syncing on this device</button></div>`;
+}
+VIEWS.join = () => `
+<div class="topbar"><button class="topbtn" data-a="go" data-v="gate">‹ Back</button><span class="who">Join</span><span></span></div>
+<div class="card"><h1>Use what’s on your other device</h1>
+<p class="muted">On the device where you made the lessons: Settings → Use on more devices → Show setup code → Copy. Send it to yourself (AirDrop, Messages, email), then paste it here.</p>
+<textarea id="syncCode" rows="3" placeholder="TUTOR1-..." autocomplete="off">${esc(view.p.code || '')}</textarea>
+<button class="big primary" data-a="syncJoin">Join</button>
+${!isStandalone() ? `<p class="muted"><small>📲 On the iPad, add the app to the Home Screen first and join from that icon. The icon keeps its own copy, separate from Safari.</small></p>` : ''}</div>`;
+function syncPoll() {
+  clearInterval(SYNC.poll);
+  if (!S.settings.sync || !S.settings.sync.auto) return;
+  SYNC.poll = setInterval(() => { if (!document.hidden) syncNow(); }, 30000);
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && S.settings.sync && S.settings.sync.auto) syncNow(); });
+window.addEventListener('online', () => { if (S.settings.sync && S.settings.sync.auto) syncNow(); });
 
 /* ==================================================================
    Boot
@@ -2662,7 +2939,9 @@ if (S.settings.apiKey) { const ck = cleanKey(S.settings.apiKey); if (ck !== S.se
 makeIcon();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 document.addEventListener('visibilitychange', () => { if (S.attempt) { if (document.hidden) { touch(); save(); } else S.attempt.tick = Date.now(); } });
+if (/^#join=/.test(location.hash)) { const code = decodeURIComponent(location.hash.slice(6)); history.replaceState(null, '', location.href.split('#')[0]); if (!S.settings.sync) view = { name: 'join', p: { code } }; }
 render();
+if (S.settings.sync && S.settings.sync.auto) { syncNow(); syncPoll(); }
 setTimeout(pumpSequences, 4000);
 // Offline start from the Home Screen: a tiny service worker keeps a copy of this page (never touches Claude calls).
 if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
