@@ -68,7 +68,7 @@ const ok = (cond, msg) => { if (!cond) throw new Fail(msg); };
 const eq = (a, b, msg) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Fail(`${msg}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`); };
 
 let browser;
-async function open({ time = WED, state, claudeCalls } = {}) {
+async function open({ time = WED, state, claudeCalls, init } = {}) {
   const ctx = await browser.newContext({ viewport: { width: 820, height: 1180 }, acceptDownloads: true });
   const page = await ctx.newPage();
   page.setDefaultTimeout(6000);
@@ -77,6 +77,7 @@ async function open({ time = WED, state, claudeCalls } = {}) {
   page.on('console', m => { if (m.type() === 'error') page.errors.push(m.text()); });
   page.on('dialog', d => d.accept());
   page.calls = claudeCalls || [];
+  if (init) await page.addInitScript(init);
   await page.route('https://api.anthropic.com/**', async route => {
     const body = JSON.parse(route.request().postData() || '{}');
     page.calls.push(body.model);
@@ -86,6 +87,10 @@ async function open({ time = WED, state, claudeCalls } = {}) {
       if (page.keyCheckFails) return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":{"message":"overloaded"}}' });
       const qs = JSON.parse(body.messages[0].content[0].text.split('Questions:\n')[1]);
       return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(JSON.stringify({ answers: qs.map(q => ({ id: q.id, answer: (page.badKeys || []).includes(q.question) ? 'something else' : solve(q) })) })) });
+    }
+    if (page.dropWhileHidden && /sonnet/.test(body.model)) { // the iPad locks while the lesson is being written
+      await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); });
+      return route.abort('connectionreset');
     }
     if (/haiku/.test(body.model)) return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse('Think of sharing a sandwich with a friend: two equal halves.') });
     const m = all.match(/Topic [A-Z][a-z]+/);
@@ -664,6 +669,8 @@ test('self-grading: pencil and "means the same" earn nothing, Mom sees self-corr
   await page.fill('#shortIn', 'the top one'); await act(page, 'answerShort');
   await act(page, 'meantThat');
   eq(await page.evaluate(() => S.attempt.pts), before, 'no points for a self-correction');
+  ok(await page.evaluate(() => S.review.some(r => r.q.prompt === 'Name the top number of a fraction.')), 'the mistake stays in her review');
+  ok(await page.evaluate(() => S.notebook.some(n => n.q.prompt === 'Name the top number of a fraction.')), 'and in her notebook');
   await play(page, { minutes: 12 });
   const r = await S(page, 'S.results[0]');
   eq(r.selfCorrected.map(x => x.given), ['the top one'], 'recorded on the result');
@@ -853,6 +860,67 @@ test('redo: Mom can get brand-new questions (fresh ids, answer keys checked)', a
   const L = await page.evaluate(id => S.lessons[id], ids[0]);
   ok(L.practice.every(q => !before.includes(q.id)), 'new question ids');
   eq(L.keyCheck.status, 'ok', 'keys checked');
+  return page;
+});
+
+const WAKE_STUB = () => { window.__wake = { req: 0, rel: 0 }; Object.defineProperty(navigator, 'wakeLock', { configurable: true, value: { request: async () => { window.__wake.req++; return { release: async () => { window.__wake.rel++; } }; } } }); };
+
+test('writing a lesson keeps the screen awake, then lets it sleep', async () => {
+  const page = await open({ init: WAKE_STUB });
+  await momSetup(page);
+  await makeLesson(page, 'Topic Awake');
+  eq(await page.evaluate(() => window.__wake), { req: 1, rel: 1 }, 'wake lock taken and released');
+  return page;
+});
+
+test('if the iPad sleeps mid-writing, Mom is told that instead of "check the Wi-Fi"', async () => {
+  const page = await open({ init: WAKE_STUB });
+  await momSetup(page);
+  page.dropWhileHidden = true; page.allowErrors = /ERR_CONNECTION_RESET|Failed to load/;
+  await page.evaluate(() => go('momHome'));
+  await act(page, 'newLesson');
+  await page.fill('#nlTopic', 'Topic Sleepy');
+  await act(page, 'generate');
+  await page.waitForFunction(() => GEN && GEN.status === 'error', null, { timeout: 10000 });
+  const t = await text(page);
+  ok(t.includes('went to sleep or another app was opened'), 'clear message: ' + t.slice(0, 200));
+  ok(!t.includes('Check the Wi-Fi'), 'does not blame the Wi-Fi');
+  eq(await page.evaluate(() => window.__wake.rel), 1, 'wake lock released');
+  return page;
+});
+
+test('Settings suggests a dedicated key with a spend limit', async () => {
+  const page = await open();
+  await momSetup(page);
+  await page.evaluate(() => go('settings'));
+  ok((await text(page)).includes('monthly spend limit'), 'advice shown');
+  return page;
+});
+
+test('offline: the app opens from cache when there is no internet (service worker)', async () => {
+  const http = require('http');
+  const root = path.resolve(__dirname, '..');
+  const server = http.createServer((req, res) => {
+    const f = path.join(root, decodeURIComponent(req.url.split('?')[0]).replace(/^\/+/, '') || 'index.html');
+    if (!f.startsWith(root) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) { res.writeHead(404); return res.end(); }
+    res.writeHead(200, { 'content-type': f.endsWith('.js') ? 'text/javascript' : 'text/html' }); fs.createReadStream(f).pipe(res);
+  });
+  await new Promise(r => server.listen(0, '127.0.0.1', r));
+  const url = `http://localhost:${server.address().port}/index.html`;
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  page.errors = [];
+  try {
+    await page.goto(url);
+    await page.evaluate(() => navigator.serviceWorker.ready);
+    await page.reload();
+    await page.waitForFunction(() => !!navigator.serviceWorker.controller);
+    await ctx.setOffline(true);
+    await page.reload();
+    ok((await page.locator('#app').textContent()).includes('Who’s using this?'), 'app opened offline');
+    const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
+    ok(/url\.origin !== self\.location\.origin\) return/.test(sw), 'never handles other sites (Claude calls)');
+  } finally { await ctx.setOffline(false); server.close(); }
   return page;
 });
 

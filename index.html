@@ -1444,10 +1444,25 @@ const estMinutes = L => Math.round((L.passage ? 4 : 0) + L.explain.length * 1 + 
 
 /* ---------- Generation job (one at a time, in memory) ---------- */
 let GEN = null;
+/* Writing a lesson streams for a minute or two. iOS stops the page if the iPad locks or Mom switches apps,
+   so keep the screen awake while writing and, if the page was hidden when the stream broke, say that plainly. */
+let WAKE = null, WRITING = 0, WRITE_HIDDEN = false;
+async function writeStart() { WRITING++; WRITE_HIDDEN = false; try { if (navigator.wakeLock && !WAKE) WAKE = await navigator.wakeLock.request('screen'); } catch (e) { WAKE = null; } }
+function writeEnd() { WRITING = Math.max(0, WRITING - 1); if (!WRITING && WAKE) { try { WAKE.release(); } catch (e) {} WAKE = null; } }
+document.addEventListener('visibilitychange', () => {
+  if (!WRITING) return;
+  if (document.hidden) WRITE_HIDDEN = true;
+  else if (navigator.wakeLock) navigator.wakeLock.request('screen').then(w => { WAKE = w; }).catch(() => {});
+});
+function writeError(e) {
+  if (WRITE_HIDDEN && (e.message === 'NETWORK' || e.message === 'STREAM')) return 'Writing stopped because the iPad went to sleep or another app was opened. Keep this screen open until it finishes, then tap Try again.';
+  return friendlyError(e);
+}
 async function startGen(req) {
   GEN = { req, chars: 0, status: 'running', ctrl: new AbortController() };
   go('generating');
   const job = GEN;
+  await writeStart();
   try {
     const out = await authorLesson(req, n => { job.chars = n; updateGenBar(); }, job.ctrl.signal);
     if (GEN !== job) return;
@@ -1460,9 +1475,9 @@ async function startGen(req) {
   } catch (e) {
     if (GEN !== job) return;
     if (e.name === 'AbortError') { GEN = null; return; }
-    job.status = 'error'; job.error = friendlyError(e);
+    job.status = 'error'; job.error = writeError(e);
     if (view.name === 'generating') render(); else if (role === 'mom') toast('The lesson didn’t finish. Open “New lesson” to retry.');
-  }
+  } finally { writeEnd(); }
 }
 const GEN_EXPECTED = 24000;
 function genPct() { return GEN ? clamp(Math.round(4 + 92 * GEN.chars / GEN_EXPECTED), 4, 96) : 0; }
@@ -1480,7 +1495,7 @@ VIEWS.generating = () => {
   return `
 <div class="center-screen"><div class="big-emoji spin">✏️</div><h1>Writing the lesson…</h1>
 <p class="muted" id="genmsg">${genMsg()}</p><div class="bar"><i id="genbar" style="width:${genPct()}%"></i></div>
-<p class="muted"><small>Usually about a minute. You can leave this screen; it keeps going.</small></p>
+<p class="muted"><small>Usually a minute or two. <b>Keep the iPad awake and stay in this app</b> until it’s done. Other screens in the app are fine.</small></p>
 <div class="row"><button class="ghost" data-a="go" data-v="momHome">Home</button><button class="ghost danger" data-a="cancelGen">Cancel</button></div></div>`;
 };
 A.retryGen = () => startGen(GEN.req);
@@ -1507,7 +1522,7 @@ A.writeStep = async v => {
   const [sid, ks] = String(v).split(':'), k = +ks, seq = S.sequences[sid]; if (!seq || WRITING_STEP) return;
   if (!S.settings.apiKey) { toast('First add your Claude key in Settings.'); go('settings'); return; }
   const e = seq.lessons[k]; if (!e || e.lessonId) return;
-  WRITING_STEP = true; e.status = 'writing'; refreshMom();
+  WRITING_STEP = true; e.status = 'writing'; refreshMom(); await writeStart();
   try {
     const out = await authorLesson({ subject: seq.subject, mode: 'sequence', seq, k });
     if (!S.sequences[seq.id]) return;
@@ -1521,7 +1536,7 @@ A.writeStep = async v => {
     toast(addToWeek(L.id, true) ? 'Written and added to this week.' : 'Written. It’s in Lessons (this week is full).');
     save();
   } catch (err) { e.status = 'error'; save(); toast('That one didn’t finish. Tap to retry.'); }
-  finally { WRITING_STEP = false; refreshMom(); }
+  finally { WRITING_STEP = false; writeEnd(); refreshMom(); }
 };
 function refreshMom() { if (role === 'mom' && ['momHome', 'summary', 'lessons', 'report'].includes(view.name)) render(); }
 
@@ -1570,7 +1585,7 @@ A.freshQs = async (id, el) => {
   const L = S.lessons[id]; if (!L) return;
   if (!S.settings.apiKey) { toast('Add your Claude key in Settings first.'); return; }
   if (!confirm('Write new practice and check questions for this lesson? It uses a few cents. The teaching cards stay the same.')) return;
-  el.disabled = true; el.textContent = 'Writing new questions…';
+  el.disabled = true; el.textContent = 'Writing new questions… keep this screen open'; await writeStart();
   try {
     const out = await authorLesson({ subject: L.meta.subject, mode: 'topic', expCode: L.meta.expectations[0] || '', topic: `${L.meta.title}. Same concepts as before: ${L.concepts.join('; ')}. Write NEW practice, pencil and check questions; do not repeat these: ${[...L.practice, ...L.check].map(q => q.prompt).join(' | ').slice(0, 3000)}`, text: '', file: null, split: false });
     const N = out.lesson, v = (L.qVersion || 1) + 1;
@@ -1578,7 +1593,7 @@ A.freshQs = async (id, el) => {
     if (N.keyCheck) N.keyCheck.issues.forEach(x => { x.qid = 'v' + v + x.qid; });
     Object.assign(L, { practice: N.practice, check: N.check, offscreen: N.offscreen.length ? N.offscreen : L.offscreen, keyCheck: N.keyCheck, qVersion: v });
     save(); toast('New questions ready.');
-  } catch (e) { toast(friendlyError(e)); }
+  } catch (e) { toast(writeError(e)); } finally { writeEnd(); }
   render();
 };
 A.addFun = async (id, el) => {
@@ -2251,7 +2266,7 @@ A.meantThat = () => {
   if (!rec || rec.correct) return;
   rec.correct = true; rec.selfCorrected = true; // no points for self-corrections; Mom sees them on the result
   if (st.k === 'warm') { const r = S.review.find(x => x.id === st.id); if (r) { r.box = Math.max(1, r.box); reviewUpdate(r, true); } }
-  else { S.review = S.review.filter(r => !(r.lessonId === a.lessonId && r.q.id === q.id)); nbUnmiss(a.lessonId, q.id); }
+  // a self-correction stays in her review and notebook: she clears it by getting it right later
   if (st.k === 'practice') { a.run = 1; a.pendingInterject = null; }
   a.sub.fb.correct = true; save(); render();
 };
@@ -2580,7 +2595,8 @@ VIEWS.settings = () => {
 <p class="muted">${k ? `Saved on this iPad (ends in …${esc(k.slice(-4))}).` : 'Not added yet. Get one at console.anthropic.com → API Keys.'}</p>
 <input data-bind="ST:key" type="password" placeholder="${k ? 'Paste a new key to replace it' : 'sk-ant-...'}" autocomplete="off">
 <div class="row" style="margin-top:10px"><button class="ghost" data-a="saveKey">Save key</button>${k ? `<button class="ghost" data-a="testKey">Test it</button>` : ''}</div>
-<p class="muted"><small>Lessons use ${esc(CONFIG.AUTHOR_MODEL)}. “Explain it differently” uses ${esc(CONFIG.EXPLAIN_MODEL)}.</small></p></div>
+<p class="muted"><small>Lessons use ${esc(CONFIG.AUTHOR_MODEL)}. “Explain it differently” uses ${esc(CONFIG.EXPLAIN_MODEL)}.</small></p>
+<p class="muted"><small>🔐 Use a key made just for this app, in its own workspace at console.anthropic.com with a <b>monthly spend limit</b> (about $10 is plenty; normal use is $2–3). Other pages on the same website address can read what this app stores, so the limit is your real protection.</small></p></div>
 <div class="card"><h2>Learner</h2><label>First name</label><div class="row"><input data-bind="ST:name" value="${esc(S.settings.learnerName)}"><button class="ghost" style="flex:0" data-a="saveName">Save</button></div></div>
 <div class="card"><h2>Backup</h2><p class="muted">Saves lessons, progress, points and goals to a file (not the key or PIN). ${S.settings.lastExport ? 'Last backup: ' + fmtDate(S.settings.lastExport) + '.' : ''}</p>
 <div class="row"><button class="ghost" data-a="exportData">💾 Save a backup</button><label class="ghost" style="margin:0;text-align:center;cursor:pointer;display:flex;align-items:center;justify-content:center">📂 Restore<input id="importFile" type="file" accept="application/json,.json" style="display:none"></label></div></div>
@@ -2648,6 +2664,8 @@ if (navigator.storage && navigator.storage.persist) navigator.storage.persist().
 document.addEventListener('visibilitychange', () => { if (S.attempt) { if (document.hidden) { touch(); save(); } else S.attempt.tick = Date.now(); } });
 render();
 setTimeout(pumpSequences, 4000);
+// Offline start from the Home Screen: a tiny service worker keeps a copy of this page (never touches Claude calls).
+if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
 </html>
