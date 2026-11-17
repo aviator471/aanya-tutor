@@ -1293,6 +1293,35 @@ test('migration: results saved by v17 are re-scored from the final test on load 
   return page;
 });
 
+test('flagging a practice question just gives her the next practice question (no jump to the paper task)', async () => {
+  const { page, ids } = await freshWithLessons(['Topic A']);
+  await page.evaluate(id => addToWeek(id, true), ids[0]);
+  await kidLogin(page);
+  await act(page, 'kidStart', ids[0]);
+  // play up to the 4th (last) question of the first practice round
+  for (let g = 0; g < 60; g++) {
+    const st = await page.evaluate(() => { const a = S.attempt, s = a.steps[a.si]; return { k: s.k, done: a.sub.done || 0, n: s.n, fb: !!a.sub.fb, q: !!curQ(), interject: a.interject }; });
+    if (st.k === 'practice' && st.done === st.n - 1 && st.q && !st.fb && st.interject == null) break;
+    await tick(page, MIN);
+    if (st.k === 'practice' && st.interject != null && !st.fb) { await act(page, 'endInterject'); continue; }
+    if (st.k === 'pencil') { if (await page.locator('#doneBtn').count()) { await tick(page, 46e3); await page.waitForFunction(() => !document.querySelector('#doneBtn').disabled); await act(page, 'pencilDone'); } else await act(page, 'pencilNext'); continue; }
+    if (st.k === 'example') { await act(page, (await page.locator('[data-a="revealStep"]').count()) ? 'revealStep' : 'next'); continue; }
+    if (st.k === 'practice' && st.q && !st.fb) { const q = await page.evaluate(() => { const q = curQ(); return { type: q.type, prompt: q.prompt, choices: q.choices, answer: q.answer, pairs: q.pairs, items: q.items, n: q.n, min: q.min, max: q.max, target: q.target }; }); await answer(page, q, await page.evaluate(() => S.attempt.sub.shuf), false); continue; }
+    await act(page, 'next');
+  }
+  const before = await page.evaluate(() => ({ si: S.attempt.si, q: curQ().prompt }));
+  const q = await page.evaluate(() => { const q = curQ(); return { type: q.type, prompt: q.prompt, choices: q.choices, answer: q.answer, pairs: q.pairs, items: q.items, n: q.n, min: q.min, max: q.max, target: q.target }; });
+  await answer(page, q, await page.evaluate(() => S.attempt.sub.shuf), true); // marked wrong because the key is wrong
+  await page.evaluate(() => { window.confirm = () => true; });
+  await act(page, 'flagQ');
+  const after = await page.evaluate(() => ({ si: S.attempt.si, k: S.attempt.steps[S.attempt.si].k, q: curQ() && curQ().prompt, fb: S.attempt.sub.fb }));
+  eq([after.si, after.k], [before.si, 'practice'], 'still in the same practice round, not the paper task');
+  ok(after.q && after.q !== before.q && !after.fb, 'a new practice question is waiting: ' + after.q);
+  ok((await text(page)).includes('Practice · 4 of 4'), 'it takes the place of the flagged one');
+  eq(await page.evaluate(() => S.flags.length), 1, 'flag recorded for Mom');
+  return page;
+});
+
 /* ---------------- runner ---------------- */
 (async () => {
   const filter = process.argv[2] ? new RegExp(process.argv[2], 'i') : null;
