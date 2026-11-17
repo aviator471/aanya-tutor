@@ -186,7 +186,7 @@ async function play(page, { minutes = 15, wrong = [], explainDifferently = false
     if (st.k === 'example') { if (st.shown < st.ex) await act(page, 'revealStep'); else await act(page, 'next'); continue; }
     if (st.k === 'pencil') {
       if (st.phase === 'work') { await tick(page, 46e3); await page.waitForFunction(() => !document.querySelector('#doneBtn').disabled, null, { timeout: 5000 }); await act(page, 'pencilDone'); }
-      else await act(page, 'pencilScore', '2');
+      else await act(page, 'pencilNext');
       continue;
     }
     if (st.fb) { if (!st.fb.correct && cause) await act(page, 'setCause', cause); await act(page, 'next'); continue; }
@@ -280,8 +280,8 @@ test('Aanya plays a whole lesson, every question type, all right', async () => {
   eq([r.checkRight, r.checkTotal], [3, 3], 'check score');
   eq(r.practiceRight, r.practiceTotal, 'all practice right');
   ok(r.minutes >= 17 && r.minutes <= 24, 'minutes from the clock: ' + r.minutes);
-  const pts = 100 + (r.practiceTotal + 3) * 5 + 50;
-  eq(r.points, pts, 'points = lesson + answers + perfect check (pencil self-score pays nothing)');
+  const pts = 100 + 3 * 5 + 50;
+  eq(r.points, pts, 'points = lesson + right answers on the final test + perfect test (practice and paper pay nothing)');
   eq(await page.evaluate(() => [S.points.balance, pendingPts()]), [0, pts], 'held until Mom accepts');
   const t = await text(page);
   ok(t.includes('Lesson complete') && t.includes('2 more to fill your week'), 'reward screen with week progress');
@@ -305,14 +305,14 @@ test('wrong answers: feedback, cause tag, mistakes notebook, review flow', async
   return page;
 });
 
-test('help-free mastery: "explain differently" (Haiku, faked) marks answers as helped', async () => {
+test('score is the whole final test: "explain differently" (Haiku, faked) marks answers as helped but they still count', async () => {
   const { page, ids } = await freshWithLessons(['Topic Gamma']);
   await page.evaluate(id => addToWeek(id, true), ids[0]);
   await kidLogin(page);
   const r = await kidDoes(page, ids[0], { minutes: 15, explainDifferently: true, wrong: ['What is 10 - 4?'] });
   ok(page.calls.some(m => /haiku/.test(m)), 'Haiku called');
   eq(r.helpedCount, 2, 'two check questions used explain card 0');
-  eq([r.masteryRight, r.masteryTotal], [1, 1], 'mastery uses only the help-free question');
+  eq([r.masteryRight, r.masteryTotal, r.mastery], [2, 3, 67], 'score counts every test question, helped or not');
   eq(r.explainUsed, 1, 'explain count');
   return page;
 });
@@ -323,7 +323,7 @@ test('flag a question: not counted against her, Mom sees it', async () => {
   await kidLogin(page);
   await act(page, 'kidStart', ids[0]);
   // go to the first question and flag it
-  for (let i = 0; i < 12; i++) { if (await page.locator('[data-a="flagQ"]').count()) break; await tick(page, MIN); const k = await page.evaluate(() => S.attempt.steps[S.attempt.si].k); if (k === 'example') await act(page, (await page.locator('[data-a="revealStep"]').count()) ? 'revealStep' : 'next'); else if (k === 'pencil') { await tick(page, 46e3); await page.waitForFunction(() => !document.querySelector('#doneBtn').disabled); await act(page, 'pencilDone'); await act(page, 'pencilScore', '2'); } else await act(page, 'next'); }
+  for (let i = 0; i < 12; i++) { if (await page.locator('[data-a="flagQ"]').count()) break; await tick(page, MIN); const k = await page.evaluate(() => S.attempt.steps[S.attempt.si].k); if (k === 'example') await act(page, (await page.locator('[data-a="revealStep"]').count()) ? 'revealStep' : 'next'); else if (k === 'pencil') { await tick(page, 46e3); await page.waitForFunction(() => !document.querySelector('#doneBtn').disabled); await act(page, 'pencilDone'); await act(page, 'pencilNext'); } else await act(page, 'next'); }
   await act(page, 'flagQ');
   await play(page, { minutes: 12 });
   const r = await S(page, 'S.results[0]');
@@ -677,7 +677,7 @@ test('self-grading: pencil and "means the same" earn nothing, Mom sees self-corr
   ok(!r.breakdown.some(x => /Pencil/.test(x[0])), 'no pencil points');
   await momLogin(page);
   await page.evaluate(id => go('result', { id }), r.id);
-  ok((await text(page)).includes('She marked these right herself'), 'Mom sees it before accepting');
+  ok((await text(page)).includes('She marked this right herself'), 'Mom sees it before accepting (in the folded practice list)');
   return page;
 });
 
@@ -1192,6 +1192,104 @@ test('sync: merge rules (append-only results and ledger, deletions, lists)', asy
   eq(Object.keys(r.lessons).sort(), ['x', 'z'], 'lessons follow');
   eq(r.lessons.x.t, 2, 'edit kept');
   eq(r.points.log.map(x => x.id), ['p1', 'p2', 'p3'], 'ledger: union by id, no duplicates');
+  return page;
+});
+
+/* =========================================================
+   v18: only the final test counts; Mom's review screen
+   ========================================================= */
+const ALL_PRACTICE = ['Which is one half?', 'What is 3 + 4?', 'Name the top number of a fraction.', 'Put in order, smallest first.', 'Match each fraction to its word.', 'Sort them.', 'Shade three quarters.', 'Place one half.'];
+test('practice mistakes change neither the score nor the points; only the final test does', async () => {
+  const { page, ids } = await freshWithLessons(['Topic A', 'Topic B']);
+  await page.evaluate(ids => ids.forEach(id => addToWeek(id, true)), ids);
+  await kidLogin(page);
+  const good = await kidDoes(page, ids[0], { minutes: 12 });
+  const bad = await kidDoes(page, ids[1], { minutes: 12, wrong: ALL_PRACTICE });
+  eq(bad.practiceRight, 0, 'every practice answer wrong');
+  eq([bad.mastery, bad.checkRight, bad.checkTotal], [100, 3, 3], 'score is the test: 3 of 3');
+  eq(bad.points, good.points, 'same points as a lesson with perfect practice');
+  eq(bad.breakdown.map(x => x[0]), ['Lesson complete (score 100%)', 'Right on the final test', 'Perfect final test!'], 'breakdown names the test');
+  return page;
+});
+
+test('Mom’s review: score on top, test answers next to the right answers (wrong first), paper work with expected answers, practice folded away', async () => {
+  const { page, ids } = await freshWithLessons(['Topic A']);
+  await page.evaluate(id => addToWeek(id, true), ids[0]);
+  await kidLogin(page);
+  const r = await kidDoes(page, ids[0], { minutes: 12, wrong: ['What is 10 - 4?', 'Which is one half?'] });
+  eq([r.mastery, r.checkRight, r.checkTotal], [67, 2, 3], 'one wrong on the test');
+  eq(r.paper.length, 1, 'paper task copied onto the result');
+  await momLogin(page);
+  await page.evaluate(() => go('results'));
+  ok((await text(page)).includes('Test 67% (2 of 3)') && (await text(page)).includes('1 to go over'), 'list shows the test score');
+  await act(page, 'openResult', r.id);
+  const t = await text(page);
+  ok(t.includes('67%') && t.includes('Final test: 2 of 3 right'), 'score at the top');
+  ok(t.includes('1 wrong. Go over it with her'), 'plain verdict');
+  // the wrong test question is the first card, with her answer and the correct one
+  const first = await page.locator('.qalist').first().locator('.qa').first();
+  const ft = await first.textContent();
+  ok(ft.includes('What is 10 - 4?') && ft.includes('999') && ft.includes('Correct') && ft.includes('6'), 'wrong one first: question, her answer, correct answer: ' + ft);
+  ok(await first.evaluate(e => e.classList.contains('bad')), 'marked as wrong');
+  const testCards = await page.evaluate(() => [...document.querySelectorAll('#app > .qalist .qa')].map(e => e.className));
+  eq(testCards.length, 3, 'all three test questions shown');
+  ok(t.includes('Draw 1/2') && t.includes('half shaded') && t.includes('Expected'), 'paper questions with expected answers');
+  ok(!(await page.locator('[data-a="pencilScore"]').count()), 'no marking of paper work');
+  ok(await page.locator('details.more').first().evaluate(d => !d.open && d.textContent.includes('Practice and warm-up') && d.textContent.includes('Which is one half?')), 'practice is folded away, still there');
+  ok(t.includes('not scored'), 'practice says it does not count');
+  return page;
+});
+
+test('Aanya checks her paper against the answers without marking it', async () => {
+  const { page, ids } = await freshWithLessons(['Topic A']);
+  await page.evaluate(id => addToWeek(id, true), ids[0]);
+  await kidLogin(page);
+  await act(page, 'kidStart', ids[0]);
+  for (let i = 0; i < 12; i++) { const k = await page.evaluate(() => S.attempt.steps[S.attempt.si].k); if (k === 'pencil') break; await tick(page, MIN); if (k === 'example') await act(page, (await page.locator('[data-a="revealStep"]').count()) ? 'revealStep' : 'next'); else await act(page, 'next'); }
+  await tick(page, 46e3); await page.waitForFunction(() => !document.querySelector('#doneBtn').disabled); await act(page, 'pencilDone');
+  const t = await text(page);
+  ok(t.includes('half shaded') && t.includes('I checked my paper'), 'she sees the answers and one button');
+  ok(!t.includes('How many did you get right'), 'no self-score');
+  await act(page, 'pencilNext');
+  eq(await page.evaluate(() => S.attempt.pencil), [{ i: 0 }], 'no count recorded');
+  return page;
+});
+
+test('subject score = average of every final test, with the latest beside it', async () => {
+  const { page } = await freshWithLessons(['Topic A']);
+  await page.evaluate(() => {
+    const mk = (d, right, total) => ({ id: uid(), sv: 2, lessonId: 'x', title: 'x', subject: 'math', at: new Date(2026, 9, d, 10).getTime(), minutes: 20, mastery: Math.round(100 * right / total), masteryTotal: total, masteryRight: right, checkRight: right, checkTotal: total, practiceRight: 0, practiceTotal: 8, maxTier: 1, breakdown: [], points: 0, accepted: true, causes: {}, missed: [], flagged: [], expectations: [], byExp: {}, pencil: [] });
+    S.results = [mk(30, 2, 3), mk(10, 3, 3), mk(1, 1, 2)]; // newest first: 67, 100, 50
+    save(); go('momHome');
+  });
+  eq(await page.evaluate(() => [subjStats('math').mastery, subjStats('math').latest]), [72, 67], 'plain average, latest');
+  ok((await text(page)).includes('Tests 72% avg · last 67%'), 'Math tile');
+  await page.evaluate(() => go('report'));
+  ok((await text(page)).includes('average of 3 final tests · latest 67%'), 'report');
+  return page;
+});
+
+test('migration: results saved by v17 are re-scored from the final test on load and on sync; points untouched', async () => {
+  const old = (id, extra) => Object.assign({ id, lessonId: 'x', title: 'Old', subject: 'math', at: WED - 5 * DAY, minutes: 20, mastery: 100, masteryRight: 1, masteryTotal: 1, helpedCount: 2, allHelped: false, checkRight: 2, checkTotal: 3, practiceRight: 5, practiceTotal: 8, maxTier: 2, breakdown: [['Lesson complete (score 100%)', 100]], points: 140, accepted: false, pending: true, paid: true, causes: {}, missed: [{ sec: 'check', prompt: 'What is 10 - 4?', given: '5', answer: '6' }], flagged: [], expectations: [], byExp: {}, pencil: [{ i: 0, right: 2, of: 2 }] }, extra);
+  const page = await open();
+  await momSetup(page);
+  const st = await page.evaluate(() => JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY)));
+  st.results = [old('r1'), old('r2', { checkTotal: 0, checkRight: 0, mastery: 0, masteryTotal: 0, masteryRight: 0 })];
+  await page.evaluate(s => { localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(s)); load(); }, st);
+  const r = await page.evaluate(() => S.results[0]);
+  eq([r.mastery, r.masteryRight, r.masteryTotal, r.sv], [67, 2, 3, 2], 'was 100% (help-free only), now 67% (2 of 3 on the test)');
+  eq([r.points, r.pending], [140, true], 'waiting points unchanged');
+  eq(await page.evaluate(() => [S.results[1].mastery, S.results[1].sv]), [0, 2], 'a result with no test is left alone');
+  eq(await page.evaluate(() => JSON.parse(localStorage.getItem(CONFIG.STORAGE_KEY)).results[0].mastery), 67, 'saved back to the iPad');
+  await page.evaluate(() => { const r = S.results[0]; migrateResults(S.results); return r.mastery; });
+  eq(await page.evaluate(() => S.results[0].mastery), 67, 'running it again changes nothing');
+  // a v17 device sends an old-style result through sync
+  await page.evaluate(o => { const m = syncData(S); m.results = [o].concat(m.results); applyShared(m); }, old('r3'));
+  eq(await page.evaluate(() => S.results.find(x => x.id === 'r3').mastery), 67, 'synced result re-scored');
+  // the review screen still works for the old result (missed questions only, paper from the lesson if it still exists)
+  await page.evaluate(() => go('result', { id: 'r1' }));
+  const t = await text(page);
+  ok(t.includes('67%') && t.includes('What is 10 - 4?') && t.includes('older lesson'), 'older result opens: ' + t.slice(0, 200));
   return page;
 });
 

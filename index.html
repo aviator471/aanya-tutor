@@ -248,6 +248,14 @@ label{display:block;font-weight:600;margin:16px 0 6px}
 .flag{display:block;margin:18px auto 0;color:var(--muted);font-size:15px;padding:8px}
 .passage p{font-size:21px;line-height:1.65;margin:.6em 0}
 .psg{background:var(--fill);border-radius:18px;padding:12px 16px;margin:0 0 16px}
+.score{display:flex;align-items:center;gap:14px;padding:14px 18px;border-radius:18px;background:var(--good-soft);color:var(--good)}.score b{display:block;font-family:var(--rounded);font-size:48px;line-height:1}.score span{font-weight:700;font-size:17px}.score.low{background:var(--soft-bg);color:var(--soft)}
+.qalist{list-style:none;margin:0;padding:0;display:grid;gap:10px}
+.qa{background:var(--card);border-radius:16px;box-shadow:var(--shadow);padding:12px 14px;border-left:6px solid var(--good)}.qa.bad{border-left-color:var(--danger)}
+.qa-h{display:flex;gap:10px;align-items:flex-start}.qa-q{font-size:18px;font-weight:650;flex:1 1 0}.qa-mark{flex:0 0 28px;height:28px;border-radius:50%;display:grid;place-items:center;font-weight:800;background:var(--good-soft);color:var(--good)}.qa.bad .qa-mark{background:rgba(217,48,37,.13);color:var(--danger)}
+.qa-a{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:8px 0 0 38px;font-size:17px}.qa-a span{color:var(--muted);font-size:14px;font-weight:700;align-self:center}.qa-a b.no{color:var(--danger)}.qa-a b.yes{color:var(--good)}
+.qa-t{margin:6px 0 0 38px;font-size:14px;color:var(--soft);font-weight:650}
+.paper ol{margin:8px 0 0;padding-left:22px}.paper li{margin:8px 0;font-size:17px}.paper .exp{color:var(--good);font-weight:750}.paper .exp span{color:var(--muted);font-size:13px;font-weight:700;margin-right:4px}
+details.more summary{cursor:pointer}details.more[open] summary{margin-bottom:8px}
 .psg summary{font-weight:700;color:var(--primary);cursor:pointer}
 .problems{font-size:24px;line-height:1.6;padding-left:30px}
 .problems li{margin:8px 0}
@@ -336,7 +344,7 @@ const CONFIG = {
   WEEK_MIN_MINUTES: 8,           // a finished lesson counts toward the week only with at least this much real work
   WEEK_BONUS: 2,                 // bonus slots Mom can add after the 3 (they unlock once 3 are done)
   BONUS_MULT: 2,                 // a bonus lesson's base points are multiplied by this
-  VERSION: 'v17 · 16 Nov',        // shown on the first screen so you can tell which copy you are running
+  VERSION: 'v18 · 17 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -557,6 +565,7 @@ function load() {
     S.settings = Object.assign(DEFAULT_STATE().settings, d.settings || {});
     S.points = Object.assign(DEFAULT_STATE().points, d.points || {});
     S.streak = Object.assign(DEFAULT_STATE().streak, d.streak || {});
+    if (migrateResults(S.results)) localStorage.setItem(CONFIG.STORAGE_KEY, JSON.stringify(S));
   } catch (e) { S = DEFAULT_STATE(); }
 }
 const SYNC_APPLYING = () => typeof SYNC !== 'undefined' && SYNC.applying;
@@ -741,7 +750,7 @@ function lessonInfo(L) {
   if (res.length) {
     const r = res[0], prev = res[1];
     group = r.mastery < REDO_BELOW ? 'redo' : 'done';
-    line = `Done ${res.length}× · last ${fmtDate(r.at)} · <b>${r.mastery}%</b>${prev ? ` (was ${prev.mastery}%)` : ''}`;
+    line = `Done ${res.length}× · last ${fmtDate(r.at)} · test <b>${r.mastery}%</b>${prev ? ` (was ${prev.mastery}%)` : ''}`;
   } else if (L.status === 'done') { group = 'done'; line = 'Done (older lesson, no score kept)'; }
   else if (today) line = 'In this week’s plan · not done yet';
   else if (asg) line = `Assigned ${fmtDate(asg.at)} · not finished`;
@@ -784,13 +793,13 @@ A.lessonTab = v => { LTAB = v; SHOW_OLD = false; render(); };
 /* ---------- Subject overview + nudge (Mom) and journey rings (Aanya) ---------- */
 const HALF_LIFE_DAYS = 21;
 function subjStats(subj) {
-  const rs = S.results.filter(r => r.subject === subj && r.masteryTotal > 0);
-  let w = 0, sum = 0; const now = Date.now();
-  rs.forEach(r => { const wt = Math.pow(0.5, (now - r.at) / 864e5 / HALF_LIFE_DAYS); w += wt; sum += wt * r.mastery; });
+  // Subject score = the plain average of every final-test score in the subject; the latest one is shown beside it.
+  const rs = S.results.filter(r => r.subject === subj && r.masteryTotal > 0); // newest first
+  const sum = rs.reduce((t, r) => t + r.mastery, 0);
   const cov = coverage(subj), items = CURRICULUM[subj].strands.flatMap(x => x.items);
   const covered = items.filter(([c]) => cov[c] && cov[c].total).length;
   const lastAt = S.results.filter(r => r.subject === subj).reduce((m, r) => Math.max(m, r.at), 0);
-  return { mastery: w ? Math.round(sum / w) : null, n: rs.length, covered, total: items.length, lastAt, cov, items };
+  return { mastery: rs.length ? Math.round(sum / rs.length) : null, latest: rs.length ? rs[0].mastery : null, n: rs.length, covered, total: items.length, lastAt, cov, items };
 }
 const focusActive = () => { const f = S.settings.focus; return f && f.text && Date.now() - f.at < 31 * 864e5 ? f : null; };
 const words = t => String(t || '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3);
@@ -814,11 +823,11 @@ function nudge() {
     return make(f.text, '', `Her class is working on “${f.text}” and there’s no lesson for it yet.`);
   }
   const redo = lessons.filter(L => info.get(L).group === 'redo').sort((a, b) => info.get(a).res[0].mastery - info.get(b).res[0].mastery)[0];
-  if (redo) return { subject: top, lesson: redo, why: `${label} needs the most help${x.mastery != null ? ' (' + x.mastery + '% lately)' : ''}. “${redo.meta.title}” scored ${info.get(redo).res[0].mastery}% last time.` };
+  if (redo) return { subject: top, lesson: redo, why: `${label} needs the most help${x.mastery != null ? ' (tests average ' + x.mastery + '%)' : ''}. “${redo.meta.title}” got ${info.get(redo).res[0].mastery}% on its test last time.` };
   const ready = seqOrder(lessons.filter(L => info.get(L).group === 'ready'))[0];
   if (ready) return { subject: top, lesson: ready, why: x.n ? `${label} could use more practice, and this lesson is ready and waiting.` : `She hasn’t done any ${label} yet. This lesson is ready.` };
-  const weak = Object.entries(x.cov).filter(([c, e]) => e.total >= 2 && e.right / e.total < 0.7).sort((a, b) => a[1].right / a[1].total - b[1].right / b[1].total)[0];
-  if (weak) return make(expText(top, weak[0]), weak[0], `${label}: ${weak[0]} is her weakest spot (${Math.round(100 * weak[1].right / weak[1].total)}%), and there’s no lesson to redo.`);
+  const weak = Object.entries(x.cov).filter(([c, e]) => e.scored >= 2 && e.right / e.scored < 0.7).sort((a, b) => a[1].right / a[1].scored - b[1].right / b[1].scored)[0];
+  if (weak) return make(expText(top, weak[0]), weak[0], `${label}: ${weak[0]} is her weakest spot (${Math.round(100 * weak[1].right / weak[1].scored)}% on tests), and there’s no lesson to redo.`);
   const gap = x.items.find(([c]) => !x.cov[c] || (!x.cov[c].lessons && !x.cov[c].total));
   if (gap) return make(gap[1], gap[0], `${label} has Grade 5 topics she hasn’t seen yet. Next up: ${gap[1].length > 70 ? gap[1].slice(0, 70).replace(/\s+\S*$/, '') + '…' : gap[1]}`);
   const old = lessons.filter(L => info.get(L).res.length).sort((a, b) => info.get(a).res[0].at - info.get(b).res[0].at)[0];
@@ -860,13 +869,13 @@ function repData(subj) {
   const avg = a => a.length ? Math.round(a.reduce((t, r) => t + r.mastery, 0) / a.length) : null;
   const cur = avg(inWin), prev = avg(prior), st = subjStats(subj);
   const em = {};
-  rs.forEach(r => { const w = Math.pow(0.5, (now - r.at) / 864e5 / HALF_LIFE_DAYS); Object.entries(r.byExp || {}).forEach(([c, [a, b]]) => { const e = em[c] = em[c] || { t: 0, rw: 0, tw: 0 }; e.t += b; e.rw += a * w; e.tw += b * w; }); });
+  rs.forEach(r => { const w = Math.pow(0.5, (now - r.at) / 864e5 / HALF_LIFE_DAYS); Object.entries(r.byExpTest || r.byExp || {}).forEach(([c, [a, b]]) => { const e = em[c] = em[c] || { t: 0, rw: 0, tw: 0 }; e.t += b; e.rw += a * w; e.tw += b * w; }); });
   const list = Object.entries(em).filter(([, e]) => e.t >= 2).map(([c, e]) => ({ code: c, pct: Math.round(100 * e.rw / e.tw), n: e.t, text: expText(subj, c) }));
   const causes = { idea: 0, fact: 0, slip: 0 }; let help = 0, chk = 0;
   inWin.forEach(r => { Object.entries(r.causes || {}).forEach(([k, v]) => { if (k in causes) causes[k] += v; }); help += r.helpedCount || 0; chk += r.checkTotal || 0; });
   const totalCause = causes.idea + causes.fact + causes.slip, top = Object.entries(causes).sort((a, b) => b[1] - a[1])[0];
   return {
-    subj, lessons: inWin.length, minutes: inWin.reduce((t, r) => t + (r.minutes || 0), 0), cur: cur != null ? cur : st.mastery, trend: cur != null && prev != null ? cur - prev : null,
+    subj, lessons: inWin.length, minutes: inWin.reduce((t, r) => t + (r.minutes || 0), 0), cur: st.mastery, latest: st.latest, month: cur, trend: cur != null && prev != null ? cur - prev : null,
     weak: list.filter(x => x.pct < REDO_BELOW).sort((x, y) => x.pct - y.pct), strong: list.filter(x => x.pct >= 85).sort((x, y) => y.pct - x.pct),
     cause: totalCause >= 2 && top[1] / totalCause >= 0.5 ? top[0] : '', helpShare: chk ? help / chk : 0, st, nAll: st.n,
   };
@@ -956,7 +965,7 @@ VIEWS.report = () => {
   const card = d => {
     const [lab, cls, note] = repStatus(d), k = d.subj, tr = d.trend;
     return `<div class="card rep s-${k}"><div class="row" style="align-items:center"><span class="emo" style="font-size:30px">${SUBJECTS[k].emoji}</span><h2 style="flex:1 1 0;margin:0;text-align:left">${SUBJECTS[k].label}</h2><span class="chip ${cls === 'bad' ? 'bad' : cls}">${lab}</span></div>
-    ${d.cur == null ? '' : `<div class="bignum">${d.cur}%${tr != null && Math.abs(tr) >= 5 ? `<small>${tr > 0 ? '▲ up ' : '▼ down '}${Math.abs(tr)} points on last month</small>` : d.cur != null && tr != null ? '<small>steady</small>' : ''}</div>`}
+    ${d.cur == null ? '' : `<div class="bignum">${d.cur}%<small>average of ${d.nAll} final test${d.nAll === 1 ? '' : 's'} · latest ${d.latest}%${tr != null && Math.abs(tr) >= 5 ? ` · ${tr > 0 ? '▲ up ' : '▼ down '}${Math.abs(tr)} on last month` : ''}</small></div>`}
     <div class="cov"><i style="width:${d.st.total ? Math.round(100 * d.st.covered / d.st.total) : 0}%"></i></div><p class="muted"><small>${d.st.covered} of ${d.st.total} Grade 5 topics practised · ${d.lessons} lesson${d.lessons === 1 ? '' : 's'} in the last ${WIN_DAYS} days</small></p>
     ${note ? `<p class="muted">${esc(note)}</p>` : ''}
     ${d.strong.length ? `<p><b>Good at</b><br>${d.strong.slice(0, 3).map(x => `${esc(shortTxt(x.text, 70))} <span class="chip g">${x.pct}%</span>`).join('<br>')}</p>` : ''}
@@ -1010,7 +1019,7 @@ VIEWS.momHome = () => {
     needBackup && !syncHealthy() ? ['New week: save a backup (one tap)', 'exportData', 'Save'] : null,
     (() => { const W = ensureWeek(), n = CONFIG.WEEK_GOAL - W.core.length; return n > 0 && !W.brk ? [`This week’s plan needs ${n} more lesson${n === 1 ? '' : 's'}`, 'lessons', 'Add'] : null; })(),
   ].filter(Boolean);
-  const tile = k => { const x = subjStats(k); return `<button class="tile s-${k}" data-a="go" data-v="report">${ringSvg(x.total ? Math.max(x.covered / x.total, x.covered ? 0.06 : 0) : 0, '', SUBJECTS[k].emoji)}<div><b>${SUBJECTS[k].label}</b><span class="${x.mastery != null && x.mastery < REDO_BELOW ? 'low' : ''}">${x.mastery == null ? 'No score yet' : x.mastery + '% lately'}</span><small>${x.covered} of ${x.total} topics</small></div></button>`; };
+  const tile = k => { const x = subjStats(k); return `<button class="tile s-${k}" data-a="go" data-v="report">${ringSvg(x.total ? Math.max(x.covered / x.total, x.covered ? 0.06 : 0) : 0, '', SUBJECTS[k].emoji)}<div><b>${SUBJECTS[k].label}</b><span class="${x.mastery != null && x.mastery < REDO_BELOW ? 'low' : ''}">${x.mastery == null ? 'No test yet' : `Tests ${x.mastery}% avg · last ${x.latest}%`}</span><small>${x.covered} of ${x.total} topics</small></div></button>`; };
   return `
 <div class="hello"><div><div class="muted"><small>${hi}</small></div><h1>How’s ${esc(kidName())} doing?</h1></div><button class="topbtn" data-a="switchUser">Switch user</button></div>
 ${GEN && GEN.status === 'running' ? `<div class="strip" data-a="go" data-v="generating"><span>✏️ Writing a lesson…</span><b>See</b></div>` : ''}
@@ -1629,16 +1638,21 @@ A.collapseSeq = id => {
 
 /* ---------- Curriculum coverage: what's been taught and how she's doing, per expectation ---------- */
 function coverage(subj) {
-  const m = {}, get = c => (m[c] = m[c] || { lessons: 0, right: 0, total: 0 });
+  // total = questions she has worked on for a topic (practice or test): that is what "practised" means.
+  // right/scored = final-test questions only, so topic percentages are test scores too.
+  // Results from before v18 only kept a mixed count, which is used for them.
+  const m = {}, get = c => (m[c] = m[c] || { lessons: 0, right: 0, total: 0, scored: 0 });
   Object.values(S.lessons).forEach(L => { if (L.meta.subject === subj) L.meta.expectations.forEach(c => get(c).lessons++); });
-  S.results.forEach(r => { if (r.subject === subj) Object.entries(r.byExp || {}).forEach(([c, [a, b]]) => { const e = get(c); e.right += a; e.total += b; }); });
+  S.results.forEach(r => { if (r.subject !== subj) return;
+    Object.entries(r.byExp || {}).forEach(([c, [, b]]) => { get(c).total += b; });
+    Object.entries(r.byExpTest || r.byExp || {}).forEach(([c, [a, b]]) => { const e = get(c); e.right += a; e.scored += b; }); });
   return m;
 }
 let CUR_SUBJ = 'math';
 VIEWS.curriculum = () => {
   const subj = CUR_SUBJ, C = CURRICULUM[subj], cov = coverage(subj);
   const all = C.strands.flatMap(s => s.items), done = all.filter(([c]) => cov[c] && cov[c].total).length;
-  const chip = c => { const e = cov[c]; if (e && e.total) { const p = Math.round(100 * e.right / e.total); return `<span class="chip ${p >= 80 ? 'g' : ''}">${p}%</span>`; } return e && e.lessons ? '<span class="chip p">Lesson ready</span>' : '<span class="chip" style="background:#F1EEE9;color:var(--muted)">Not yet</span>'; };
+  const chip = c => { const e = cov[c]; if (e && e.scored) { const p = Math.round(100 * e.right / e.scored); return `<span class="chip ${p >= 80 ? 'g' : ''}">${p}%</span>`; } return e && e.total ? '<span class="chip p">Practised</span>' : e && e.lessons ? '<span class="chip p">Lesson ready</span>' : '<span class="chip" style="background:#F1EEE9;color:var(--muted)">Not yet</span>'; };
   return `
 <div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Grade 5 curriculum</span><span></span></div>
 <div class="subjects">${Object.entries(SUBJECTS).map(([k, s]) => `<button class="${subj === k ? 'on' : ''}" data-a="curSubj" data-v="${k}"><span>${s.emoji}</span>${s.label}</button>`).join('')}</div>
@@ -1818,8 +1832,8 @@ function momWeekCard(detail) {
   const short = W.reduce((t, w) => t + w.short, 0);
   return `<div class="card"><div class="row"><h2 style="flex:1 1 0;margin:0;text-align:left">Lessons per week</h2><span class="chip ${cur.count >= G ? 'g' : ''}">${cur.count} / ${G}</span></div>
   <p class="muted" style="margin-bottom:4px"><small>${status}</small></p>${weekChart(W)}
-  ${detail ? `<table class="wktable"><tr><th>Week of</th><th>Lessons</th><th>Avg mastery</th><th>Minutes</th></tr>${W.map(w => `<tr><td>${esc(fmtDate(new Date(w.start + 'T12:00:00')))}${w.current ? ' (now)' : ''}</td><td>${w.count}${w.count >= G ? ' ✓' : isBreak(w.start) ? ' 🌴' : ''}</td><td>${w.mastery == null ? '–' : w.mastery + '%'}</td><td>${w.minutes}</td></tr>`).join('')}</table>
-  <p class="muted"><small>Weeks run Monday to Sunday. A finished lesson counts when she spent at least ${CONFIG.WEEK_MIN_MINUTES} minutes on it; mistake reviews don’t count. Mastery is the help-free check score.${short ? ` ${short} very short lesson${short === 1 ? '' : 's'} in these weeks didn’t count.` : ''}</small></p>` : ''}</div>`;
+  ${detail ? `<table class="wktable"><tr><th>Week of</th><th>Lessons</th><th>Avg test score</th><th>Minutes</th></tr>${W.map(w => `<tr><td>${esc(fmtDate(new Date(w.start + 'T12:00:00')))}${w.current ? ' (now)' : ''}</td><td>${w.count}${w.count >= G ? ' ✓' : isBreak(w.start) ? ' 🌴' : ''}</td><td>${w.mastery == null ? '–' : w.mastery + '%'}</td><td>${w.minutes}</td></tr>`).join('')}</table>
+  <p class="muted"><small>Weeks run Monday to Sunday. A finished lesson counts when she spent at least ${CONFIG.WEEK_MIN_MINUTES} minutes on it; mistake reviews don’t count. Test score is the final test at the end of each lesson; practice doesn’t count.${short ? ` ${short} very short lesson${short === 1 ? '' : 's'} in these weeks didn’t count.` : ''}</small></p>` : ''}</div>`;
 }
 const activeGoal = () => S.goals.find(g => !g.done);
 function goalCard(compact) {
@@ -2044,14 +2058,14 @@ function pencilCard(i) {
   }
   return `<div class="card"><div class="step-label">Check your paper ✅</div><h2>${esc(P.title)}</h2>
   <ol class="problems">${P.problems.map((p, j) => `<li>${esc(p)}<br><b style="color:var(--good)">${esc(P.answers[j] || '—')}</b></li>`).join('')}</ol>
-  <h2 style="text-align:center">How many did you get right?</h2>
-  <div class="selfscore">${P.problems.map((_, j) => j).concat(P.problems.length).map(n => `<button data-a="pencilScore" data-v="${n}">${n}</button>`).join('')}</div></div>`;
+  <p class="muted">Look at your paper next to these answers. Fix anything that’s different. Mom will look at your paper too.</p>
+  <button class="big primary" data-a="pencilNext">I checked my paper</button></div>`;
 }
 A.pencilDone = () => { if (pencilWait() > 0) return; S.attempt.sub.phase = 'answers'; save(); render(); };
-A.pencilScore = v => {
-  const a = S.attempt, st = a.steps[a.si], P = curLesson().offscreen[st.i], n = clamp(+v, 0, P.problems.length);
-  a.pencil.push({ i: st.i, right: n, of: P.problems.length });
-  toast(n === P.problems.length ? 'All of them! Amazing! 🌟' : n ? 'Nice work! ✏️' : 'Thanks for being honest. That’s how we learn! 💪');
+// Paper work isn't marked by the app or by her: Mom looks at the paper with the expected answers on her review screen.
+A.pencilNext = () => {
+  const a = S.attempt, st = a.steps[a.si];
+  a.pencil.push({ i: st.i }); toast('Nice work! ✏️');
   advance();
 };
 A.revealStep = () => { S.attempt.sub.shown = (S.attempt.sub.shown || 0) + 1; save(); render(); };
@@ -2198,7 +2212,7 @@ function givenText(q, g) {
   return Array.isArray(g) ? g.join(' → ') : g;
 }
 function feedbackView(q, fb) {
-  if (fb.correct) return `<div class="fb good"><div class="fbtop">${pip('cheer')}<div class="fb-h">${fb.cheer} <span class="plus">+${CONFIG.POINTS.perCorrect}</span></div></div>
+  if (fb.correct) return `<div class="fb good"><div class="fbtop">${pip('cheer')}<div class="fb-h">${fb.cheer}${fb.pts ? ` <span class="plus">+${fb.pts}</span>` : ''}</div></div>
     ${fb.combo >= 3 ? `<p class="combo">🔥 ${fb.combo} in a row!</p>` : ''}${fb.levelUp ? '<p>Level up! Trickier ones coming. ⬆️</p>' : ''}<button class="big primary" data-a="next">Next →</button></div>`;
   return `<div class="fb soft"><div class="fbtop">${pip('think')}<div class="fb-h">Not quite — here’s why…</div></div>
     <p>${esc(q.explanationWrong)}</p><p>Answer: <b>${esc(answerText(q))}</b></p>
@@ -2254,7 +2268,8 @@ function submitAnswer(given) {
   const correct = judge(q, given), sec = secOf(st);
   const rec = { si: a.si, sec, qid: q.id, exp: q.exp || '', type: q.type, helped: sec !== 'warm' && !!(a.helped || {})[q.explainRef || 0], correct, given: givenText(q, given), tier: q.tier, prompt: q.prompt, answer: answerText(q) };
   a.answers.push(rec);
-  const fb = { correct, given: WIDGETS.includes(q.type) ? '' : given, cheer: pick(CHEERS) };
+  // only final-test answers (and mistake-review answers) earn points, so only those show "+5"
+  const fb = { correct, given: WIDGETS.includes(q.type) ? '' : given, cheer: pick(CHEERS), pts: correct && (sec === 'check' || a.mode === 'review') ? CONFIG.POINTS.perCorrect : 0 };
   a.combo = correct ? (a.combo || 0) + 1 : 0; fb.combo = a.combo;
   if (correct) a.pts += CONFIG.POINTS.perCorrect;
   if (st.k === 'practice') {
@@ -2384,6 +2399,25 @@ function bumpStreak() {
   s.count = s.last === addDays(t, -1) ? s.count + 1 : 1; s.last = t; s.best = Math.max(s.best, s.count);
   return s.count % CONFIG.POINTS.streakEvery === 0 ? CONFIG.POINTS.streakBonus : 0;
 }
+const testPct = (right, total) => total ? Math.round(100 * right / total) : 0;
+// The paper tasks she did, copied onto the result so Mom can review them even if the lesson is later changed or deleted.
+function paperFor(L, a) {
+  const seen = new Set(a.steps.filter(st => st.k === 'pencil').map(st => st.i));
+  return (L.offscreen || []).filter((_, i) => seen.has(i)).map(P => ({ title: P.title || '', instructions: P.instructions || '', problems: (P.problems || []).slice(), answers: (P.answers || []).slice() }));
+}
+// v18 (2026-11-17): a lesson's score became the final-test score, every check question counted.
+// Older results scored only the help-free check questions. Re-score them from the check counts they
+// already hold, so every result means the same thing. Points already paid or waiting are not changed.
+// Safe to run any number of times, on any device, on synced or restored data.
+function migrateResults(list) {
+  let n = 0;
+  (list || []).forEach(r => {
+    if (!r || r.sv >= 2) return;
+    if (r.checkTotal > 0) { r.mastery = testPct(r.checkRight || 0, r.checkTotal); r.masteryRight = r.checkRight || 0; r.masteryTotal = r.checkTotal; }
+    r.sv = 2; n++;
+  });
+  return n;
+}
 function finishAttempt() {
   const a = S.attempt; if (!a) return;
   touch();
@@ -2396,11 +2430,13 @@ function finishAttempt() {
   if (!L) { S.attempt = null; save(); go('kidHome'); return; }
   const scored = a.answers.filter(x => !x.flagged && !x.skipped);
   const chk = scored.filter(x => x.sec === 'check'), prac = scored.filter(x => x.sec === 'practice');
-  const chkRight = chk.filter(x => x.correct).length;
-  const chkFree = chk.filter(x => !x.helped), basis = chkFree.length ? chkFree : chk, basisRight = basis.filter(x => x.correct).length;
+  const chkRight = chk.filter(x => x.correct).length, chkFree = chk.filter(x => !x.helped);
   const perfect = chk.length > 0 && chkRight === chk.length;
   const base = CONFIG.POINTS.lessonBase, mins = Math.max(1, Math.round(a.active / 60000));
-  const mastery = basis.length ? Math.round(100 * basisRight / basis.length) : 0;
+  // The lesson's score is the final test only (the check at the end), every question in it, help or not.
+  // Practice and warm-up never change the score or the points (Andrew, 2026-11-17).
+  const mastery = testPct(chkRight, chk.length);
+  const testPts = chk.filter(x => x.correct && !x.selfCorrected).length * CONFIG.POINTS.perCorrect;
   const counts = mins >= CONFIG.WEEK_MIN_MINUTES;
   const paidThisWeek = S.results.some(x => x.lessonId === L.id && x.paid && x.at >= weekStartMs(S.week.start));
   const isBonus = counts && !paidThisWeek && S.week.bonus.includes(L.id) && !slotDone(L.id) && bonusOpen();
@@ -2412,23 +2448,24 @@ function finishAttempt() {
   else if (paidThisWeek) bd = [['No points: you already earned this lesson this week', 0]];
   else {
     bd = [[isBonus ? `Bonus lesson ×${CONFIG.BONUS_MULT} (score ${mastery}%)` : `Lesson complete (score ${mastery}%)`, lessonPts]];
-    if (a.pts) bd.push(['Correct answers', a.pts]);
-    if (perfect) bd.push(['Perfect check!', CONFIG.POINTS.perfectCheck]);
+    if (testPts) bd.push(['Right on the final test', testPts]);
+    if (perfect) bd.push(['Perfect final test!', CONFIG.POINTS.perfectCheck]);
   }
   bumpStreak(); // still tracked, no longer shown or rewarded: the weekly goal replaced the daily streak
   const total = bd.reduce((s, x) => s + x[1], 0); // held as "waiting for Mom" until she accepts the result
   const r = {
     id: uid(), lessonId: L.id, title: L.meta.title, subject: L.meta.subject, at: Date.now(),
     minutes: mins, bonus: !!isBonus,
-    mastery, masteryRight: basisRight, masteryTotal: basis.length, helpedCount: chk.length - chkFree.length, allHelped: chk.length > 0 && !chkFree.length, checkRight: chkRight, checkTotal: chk.length,
+    sv: 2, mastery, masteryRight: chkRight, masteryTotal: chk.length, helpedCount: chk.length - chkFree.length, allHelped: chk.length > 0 && !chkFree.length, checkRight: chkRight, checkTotal: chk.length,
     causes: scored.reduce((m, x) => { if (!x.correct && x.cause) m[x.cause] = (m[x.cause] || 0) + 1; return m; }, {}),
     practiceRight: prac.filter(x => x.correct).length, practiceTotal: prac.length, maxTier: a.maxTier,
-    pencil: a.pencil, explainUsed: L.explainUsed || 0,
+    pencil: a.pencil, paper: paperFor(L, a), explainUsed: L.explainUsed || 0,
     missed: scored.filter(x => !x.correct).map(x => ({ sec: x.sec, prompt: x.prompt, given: x.given, answer: x.answer })),
     flagged: a.answers.filter(x => x.flagged).map(x => x.prompt),
-    log: scored.map(x => ({ sec: x.sec, prompt: String(x.prompt).slice(0, 160), given: String(x.given == null ? '' : x.given).slice(0, 80), answer: String(x.answer || '').slice(0, 100), ok: !!x.correct, help: !!x.helped, cause: x.cause || '', tier: x.tier || 0, kind: x.type || '' })),
+    log: scored.map(x => ({ sec: x.sec, prompt: String(x.prompt).slice(0, 400), given: String(x.given == null ? '' : x.given).slice(0, 200), answer: String(x.answer || '').slice(0, 200), ok: !!x.correct, self: !!x.selfCorrected, help: !!x.helped, cause: x.cause || '', tier: x.tier || 0, kind: x.type || '' })),
     expectations: L.meta.expectations.slice(),
-    byExp: scored.reduce((m, x) => { if (x.exp && !x.helped && (x.sec === 'practice' || x.sec === 'check')) { const e = m[x.exp] = m[x.exp] || [0, 0]; e[1]++; if (x.correct) e[0]++; } return m; }, {}),
+    byExp: scored.reduce((m, x) => { if (x.exp && !x.helped && (x.sec === 'practice' || x.sec === 'check')) { const e = m[x.exp] = m[x.exp] || [0, 0]; e[1]++; if (x.correct) e[0]++; } return m; }, {}), // topics she has worked on
+    byExpTest: chk.reduce((m, x) => { if (x.exp) { const e = m[x.exp] = m[x.exp] || [0, 0]; e[1]++; if (x.correct) e[0]++; } return m; }, {}), // topic scores: final test only
     points: total, breakdown: bd, accepted: false, pending: total > 0, paid: total > 0,
     selfCorrected: a.answers.filter(x => x.selfCorrected).map(x => ({ prompt: x.prompt, given: x.given, answer: x.answer })),
   };
@@ -2466,7 +2503,7 @@ VIEWS.reward = ({ rid }) => {
   <p class="big-points">+${r.points} points</p>${r.points ? '<p class="muted" style="margin-top:-8px">Mom will check them, then they go in your balance.</p>' : ''}
   <ul class="breakdown">${r.breakdown.map(([k, v]) => `<li><span>${esc(k)}</span><b>+${v}</b></li>`).join('')}</ul>
   ${(() => { const w = weekList(1)[0], G = CONFIG.WEEK_GOAL; const msg = !countsForWeek(r) ? `Lessons count toward your week when you spend at least ${CONFIG.WEEK_MIN_MINUTES} minutes on them.` : w.count === G ? (S.week.bonus.length ? 'You did your 3! 🎉 Bonus lessons are open: double points!' : 'You did your 3! 🎉 Week complete.') : w.count < G ? `${G - w.count} more to fill your week!` : r.bonus ? `Bonus star! ⭐ ${CONFIG.BONUS_MULT}× points!` : w.count <= G + CONFIG.WEEK_BONUS ? 'Bonus star! ⭐' : 'Super week! 🌟'; return `<div class="card wk${w.count >= G ? ' full' : ''}" style="text-align:center"><p class="lead" style="margin-top:0">${msg}</p>${weekSlots(w, false)}</div>`; })()}
-  <div class="stats"><div class="stat"><span style="font-size:26px;line-height:30px">🗓️</span><b>${weekList(1)[0].count}/${CONFIG.WEEK_GOAL}</b><span>this week</span></div><div class="stat">${ICON.star.replace('<svg','<svg width="30" height="30"')}<b>${S.points.balance}</b><span>points</span></div><div class="stat"><span style="font-size:26px;line-height:30px">✅</span><b>${r.checkRight}/${r.checkTotal}</b><span>on the check</span></div></div>
+  <div class="stats"><div class="stat"><span style="font-size:26px;line-height:30px">🗓️</span><b>${weekList(1)[0].count}/${CONFIG.WEEK_GOAL}</b><span>this week</span></div><div class="stat">${ICON.star.replace('<svg','<svg width="30" height="30"')}<b>${S.points.balance}</b><span>points</span></div><div class="stat"><span style="font-size:26px;line-height:30px">✅</span><b>${r.checkRight}/${r.checkTotal}</b><span>on the test</span></div></div>
   ${goalCard(true)}
   ${toReview ? `<button class="big secondary" data-a="startReview" data-v="${r.lessonId}">🔁 Review your mistakes (${toReview})</button>` : ''}
   ${nx ? (nx.lesson ? `<div class="card"><b>Up next:</b> ${esc(nx.lesson.meta.title)}<br><span class="muted">${inWeek(nx.lesson.id) ? 'It’s in your week.' : 'Mom can add it to your week.'}</span></div>` : `<div class="card"><b>Up next:</b> ${esc(nx.entry.title)}<br><span class="muted">Being written. It’ll be ready soon.</span></div>`) : ''}
@@ -2493,31 +2530,70 @@ function confetti() {
 /* ==================================================================
    Mom: results, flags, rewards, settings
    ================================================================== */
+const testLine = r => r.checkTotal ? `Test ${r.mastery}% (${r.checkRight} of ${r.checkTotal})` : 'No test';
 VIEWS.results = () => `
 <div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Results</span><span></span></div>
-${S.results.some(r => !r.accepted) ? `<div class="card"><p style="margin-top:0">${pendingPts()} points are waiting for you to accept. Accepting adds them to ${esc(kidName())}’s balance. Open a result to see self-corrections and flags first.</p><button class="big primary" data-a="acceptAll">Accept all</button></div>` : ''}
-<div class="card">${S.results.length ? `<ul class="list">${S.results.map(r => `<li class="item"><div class="grow"><div class="t">${esc(r.title)}</div>
-  <div class="s">${fmtDate(r.at)} · ${r.mastery}% · ${r.minutes} min · ${r.rejected ? 'not paid' : (r.points || 0) + ' pts' + (r.pending ? ' waiting' : '')}${r.flagged && r.flagged.length ? ' · 🚩' : ''}${r.selfCorrected && r.selfCorrected.length ? ' · ✋ self-corrected' : ''}</div></div>
-  ${r.accepted ? '<span class="chip g">Accepted</span>' : `<button class="sm" data-a="acceptResult" data-v="${r.id}">Accept</button>`}<button class="sm" data-a="openResult" data-v="${r.id}">View</button></li>`).join('')}</ul>` : '<p class="muted">No results yet.</p>'}</div>`;
+${S.results.some(r => !r.accepted) ? `<div class="card"><p style="margin-top:0">${pendingPts()} points are waiting for you to accept. Accepting adds them to ${esc(kidName())}’s balance. Tap Review to see her test answers first.</p><button class="big primary" data-a="acceptAll">Accept all</button></div>` : ''}
+<div class="card">${S.results.length ? `<ul class="list">${S.results.map(r => { const wrong = r.checkTotal ? r.checkTotal - r.checkRight : 0; return `<li class="item"><div class="grow"><div class="t">${esc(r.title)}</div>
+  <div class="s"><b style="color:${r.checkTotal && r.mastery < REDO_BELOW ? 'var(--danger)' : 'inherit'}">${testLine(r)}</b>${wrong ? ` · ${wrong} to go over` : ''}</div>
+  <div class="s">${fmtDate(r.at)} · ${r.minutes} min · ${r.rejected ? 'not paid' : (r.points || 0) + ' pts' + (r.pending ? ' waiting' : '')}${r.flagged && r.flagged.length ? ' · 🚩' : ''}</div></div>
+  ${r.accepted ? '<span class="chip g">Accepted</span>' : `<button class="sm" data-a="acceptResult" data-v="${r.id}">Accept</button>`}<button class="sm" data-a="openResult" data-v="${r.id}">Review</button></li>`; }).join('')}</ul>` : '<p class="muted">No results yet.</p>'}</div>`;
+/* Mom's review of one lesson. Built for a quick look: the final-test score, then every test question with
+   her answer next to the right one (the ones to go over first), then the paper work with its expected answers.
+   Practice is folded away underneath because it doesn't count. */
+function qaItem(x, n) {
+  const bad = !x.ok || x.self;
+  const tags = [x.self ? '✋ She marked this right herself (“my answer means the same”). Check it.' : '', x.help ? 'Had extra help on this idea first' : '', !x.ok && x.cause && CAUSES[x.cause] ? 'She says: ' + CAUSES[x.cause][1] : ''].filter(Boolean);
+  return `<li class="qa ${bad ? 'bad' : 'ok'}"><div class="qa-h"><span class="qa-mark">${x.ok && !x.self ? '✓' : x.self ? '?' : '✗'}</span><div class="qa-q">${n ? `<small class="muted">Q${n}</small> ` : ''}${esc(x.prompt)}</div></div>
+  <div class="qa-a"><span>${esc(kidName())}</span><b class="${x.ok && !x.self ? 'yes' : 'no'}">${esc(x.given == null || x.given === '' ? '(no answer)' : x.given)}</b>${x.ok && !x.self ? '' : `<span>Correct</span><b class="yes">${esc(x.answer)}</b>`}</div>
+  ${tags.length ? `<div class="qa-t">${tags.map(esc).join('<br>')}</div>` : ''}</li>`;
+}
+function resultTest(r) {
+  if (r.log && r.log.length) {
+    const self = new Set((r.selfCorrected || []).map(x => x.prompt));
+    const all = r.log.map((x, i) => Object.assign({}, x, { n: i, self: x.self || (x.ok && self.has(x.prompt)) }));
+    const test = all.filter(x => x.sec === 'check').map((x, i) => Object.assign(x, { qn: i + 1 }));
+    return { test, other: all.filter(x => x.sec !== 'check'), full: true };
+  }
+  // older results kept only the missed questions
+  return { test: (r.missed || []).filter(m => m.sec === 'check').map(m => ({ prompt: m.prompt, given: m.given, answer: m.answer, ok: false })), other: (r.missed || []).filter(m => m.sec !== 'check').map(m => Object.assign({ ok: false }, m)), full: false };
+}
+function resultPaper(r) {
+  if (r.paper) return r.paper;
+  const L = S.lessons[r.lessonId]; // older results: show the lesson’s paper tasks if the lesson is still here
+  return L && r.pencil && r.pencil.length ? r.pencil.map(p => L.offscreen[p.i]).filter(Boolean) : [];
+}
 VIEWS.result = ({ id }) => {
   const r = S.results.find(x => x.id === id); if (!r) return VIEWS.results();
-  const pen = r.pencil.reduce((s, p) => [s[0] + p.right, s[1] + p.of], [0, 0]);
+  const { test, other, full } = resultTest(r), paper = resultPaper(r);
+  const goOver = test.filter(x => !x.ok || x.self), fine = test.filter(x => x.ok && !x.self);
+  const wrong = r.checkTotal - r.checkRight, low = r.checkTotal && r.mastery < REDO_BELOW;
+  const otherWrong = other.filter(x => !x.ok).length;
+  const verdict = !r.checkTotal ? 'This lesson had no final test.' : wrong === 0 && !goOver.length ? `All ${r.checkTotal} right. Nothing to go over.` : `${wrong ? `${wrong} wrong` : ''}${wrong && goOver.length > wrong ? ' and ' : ''}${goOver.length > wrong ? `${goOver.length - wrong} she marked right herself` : ''}. Go over ${goOver.length === 1 ? 'it' : 'them'} with her below.`;
   return `
-<div class="topbar"><button data-a="go" data-v="momHome">← Home</button>${subjChip(r.subject)}</div>
-<div class="card"><h1>${esc(r.title)}</h1><p class="muted">${new Date(r.at).toLocaleString()}</p>
-<div class="stats"><div class="stat"><b>${r.mastery}%</b><span>mastery (check)</span></div><div class="stat"><b>${r.minutes}</b><span>minutes</span></div><div class="stat"><b>${r.maxTier}/3</b><span>top level reached</span></div></div>
-<div class="kv"><span>Check</span><b>${r.checkRight} of ${r.checkTotal}</b>
-${r.helpedCount ? `<span>Mastery counts only answers she got without extra help</span><b>${r.allHelped ? 'all had help' : r.masteryRight + ' of ' + r.masteryTotal}</b>` : ''}
-${r.causes && Object.keys(r.causes).length ? `<span>Why she says she missed them</span><b>${Object.entries(r.causes).map(([k, n]) => `${CAUSES[k][1]} ${n}`).join(', ')}</b>` : ''}<span>Practice</span><b>${r.practiceRight} of ${r.practiceTotal}</b>
-${Object.keys(r.byExp || {}).length ? Object.entries(r.byExp).map(([c, [a, b]]) => `<span>${esc(c)} ${esc(expText(r.subject, c))}</span><b>${a} of ${b}</b>`).join('') : ''}
-<span>Pencil work (her own count)</span><b>${pen[0]} of ${pen[1]}</b><span>“Explain differently” used</span><b>${r.explainUsed} of ${CONFIG.EXPLAIN_CAP}</b><span>Points earned</span><b>${r.points}</b></div>
-${r.selfCorrected && r.selfCorrected.length ? `<div class="card" style="box-shadow:none;border:1px solid var(--line)"><b>She marked these right herself (“my answer means the same”):</b><ul>${r.selfCorrected.map(x => `<li>${esc(x.prompt)}<br><small>She wrote: <b>${esc(x.given)}</b> · Key: <b>${esc(x.answer)}</b></small></li>`).join('')}</ul></div>` : ''}
-${r.accepted ? `<p class="chip ${r.rejected ? '' : 'g'}" style="margin-top:14px">${r.rejected ? 'Not paid' : 'Accepted ✓'}</p>` : `<button class="big primary" data-a="acceptResult" data-v="${r.id}">Accept${r.pending ? ` and pay ${r.points} points` : ''}</button>${r.pending ? `<button class="link" data-a="rejectResult" data-v="${r.id}">Don’t pay for this one</button>` : ''}`}</div>
-${r.log && r.log.length ? `<h3>Every question (${r.log.length})</h3><div class="card"><ul class="list">${r.log.map((x, i) => `<li class="item"><span class="chip ${x.ok ? 'g' : ''}" style="${x.ok ? '' : 'background:var(--soft-bg);color:var(--soft)'}">${x.ok ? '✓' : '✗'}</span><div class="grow"><div class="t">${esc(x.prompt)}</div>
-  <div class="s">${x.sec === 'check' ? 'Check' : x.sec === 'practice' ? 'Practice' : 'Warm-up'}${x.tier ? ' · level ' + x.tier : ''}${x.kind && ['match', 'sort', 'fraction', 'numberline', 'order'].includes(x.kind) ? ' · hands-on' : ''} · She: ${esc(x.given)}${x.ok ? '' : ' · Answer: ' + esc(x.answer)}${x.help ? ' · <b>had extra help</b>' : ''}${x.cause ? ' · ' + esc(CAUSES[x.cause] ? CAUSES[x.cause][1] : '') : ''}</div></div></li>`).join('')}</ul></div>` : ''}
-${r.pencil && r.pencil.length ? `<div class="card"><b>Pencil work (her own count):</b> ${r.pencil.map(p => `task ${p.i + 1}: ${p.right} of ${p.of}`).join(' · ')}</div>` : ''}
-${r.missed.length ? `<h3>Questions she missed (${r.missed.length})</h3><div class="card"><ul class="list">${r.missed.map(m => `<li class="item"><div class="grow"><div class="t">${esc(m.prompt)}</div><div class="s">She said: ${esc(m.given)} · Answer: ${esc(m.answer)}</div></div></li>`).join('')}</ul><p class="muted"><small>These come back in her review sessions automatically.</small></p></div>` : '<div class="card"><p>No missed questions. 🎉</p></div>'}
-${r.flagged.length ? `<h3>She flagged</h3><div class="card"><ul>${r.flagged.map(f => `<li>${esc(f)}</li>`).join('')}</ul><button class="ghost" data-a="go" data-v="flags">Review flags when you have time</button></div>` : ''}`;
+<div class="topbar"><button data-a="go" data-v="results">← Results</button>${subjChip(r.subject)}</div>
+<div class="card"><h1 style="margin-bottom:2px">${esc(r.title)}</h1><p class="muted" style="margin-top:0">${new Date(r.at).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · ${r.minutes} min</p>
+<div class="score${low ? ' low' : ''}"><div><b>${r.checkTotal ? r.mastery + '%' : '–'}</b><span>Final test${r.checkTotal ? `: ${r.checkRight} of ${r.checkTotal} right` : ''}</span></div></div>
+<p style="font-size:19px;margin:12px 0 4px">${verdict}</p>
+${r.helpedCount ? `<p class="muted" style="margin:4px 0"><small>${r.helpedCount} test question${r.helpedCount === 1 ? '' : 's'} came after she asked for extra help on that idea. They count like the others.</small></p>` : ''}
+<p class="muted" style="margin:4px 0"><small>Only the final test counts for her score and points. Practice is below, folded away.</small></p>
+${r.accepted ? `<p class="chip ${r.rejected ? '' : 'g'}" style="margin-top:10px">${r.rejected ? 'Not paid' : `Accepted ✓ · ${r.points} points`}</p>` : `<button class="big primary" data-a="acceptResult" data-v="${r.id}">Accept${r.pending ? ` and pay ${r.points} points` : ''}</button>${r.pending ? `<button class="link" data-a="rejectResult" data-v="${r.id}">Don’t pay for this one</button>` : ''}`}</div>
+${r.checkTotal ? `<h3>Final test</h3>
+${goOver.length ? `<p class="muted" style="margin:-4px 0 8px">Go over ${goOver.length === 1 ? 'this one' : 'these'} with her</p><ul class="qalist">${goOver.map(x => qaItem(x, x.qn)).join('')}</ul>` : ''}
+${fine.length ? `${goOver.length ? '<p class="muted" style="margin:14px 0 8px">She got these right</p>' : ''}<ul class="qalist">${fine.map(x => qaItem(x, x.qn)).join('')}</ul>` : ''}
+${!full ? `<div class="card"><p class="muted" style="margin:0">This is an older lesson, so only the questions she missed were kept.${goOver.length ? '' : ' She missed none on the test.'}</p></div>` : ''}` : ''}
+${paper.length ? `<h3>Paper work</h3><p class="muted" style="margin:-4px 0 8px">She did these on paper. Look at her sheet next to the expected answers to see she understood.</p>
+${paper.map((P, k) => `<div class="card paper"><b>${paper.length > 1 ? `Task ${k + 1}: ` : ''}${esc(P.title)}</b>${P.instructions ? `<p class="muted" style="margin:4px 0 0">${esc(P.instructions)}</p>` : ''}
+<ol>${(P.problems || []).map((q, j) => `<li><div>${esc(q)}</div><div class="exp"><span>Expected</span> ${esc((P.answers || [])[j] || '—')}</div></li>`).join('')}</ol></div>`).join('')}` : ''}
+${other.length ? `<details class="card more"><summary><b>Practice and warm-up</b> <span class="muted">${full ? `${other.length} question${other.length === 1 ? '' : 's'}, ${otherWrong} wrong` : `${otherWrong} missed`} · not scored</span></summary>
+<p class="muted"><small>For your interest only. Questions she missed here come back in her mistake reviews automatically.</small></p>
+<ul class="qalist">${other.slice().sort((a, b) => (a.ok - b.ok) || ((a.n || 0) - (b.n || 0))).map(x => qaItem(Object.assign({}, x, { prompt: (x.sec === 'warm' ? 'Warm-up · ' : 'Practice · ') + x.prompt }))).join('')}</ul></details>` : ''}
+${r.flagged.length ? `<h3>She flagged</h3><div class="card"><p class="muted" style="margin-top:0"><small>She thought the answer key was wrong. These don’t count against her.</small></p><ul>${r.flagged.map(f => `<li>${esc(f)}</li>`).join('')}</ul><button class="ghost" data-a="go" data-v="flags">Review flags when you have time</button></div>` : ''}
+<details class="card more"><summary><b>Points and other details</b></summary><div class="kv">
+${(r.breakdown || []).map(([k, v]) => `<span>${esc(k)}</span><b>${v}</b>`).join('')}<span>Points in total</span><b>${r.points}</b>
+<span>Practice</span><b>${r.practiceRight} of ${r.practiceTotal} (not scored)</b><span>Top level reached in practice</span><b>${r.maxTier}/3</b>
+${Object.keys(r.byExpTest || {}).length ? Object.entries(r.byExpTest).map(([c, [a, b]]) => `<span>Test: ${esc(c)} ${esc(expText(r.subject, c))}</span><b>${a} of ${b}</b>`).join('') : ''}
+<span>“Explain differently” used</span><b>${r.explainUsed} of ${CONFIG.EXPLAIN_CAP}</b></div></details>`;
 };
 A.openResult = id => go('result', { id });
 const pendingPts = () => S.results.filter(r => r.pending && !r.accepted).reduce((t, r) => t + (r.points || 0), 0);
@@ -2566,7 +2642,7 @@ VIEWS.rewards = () => {
 <div class="card">${S.redeemables.length ? `<ul class="list">${S.redeemables.map(r => `<li class="item"><div class="grow t">${esc(r.name)}</div><span class="chip">${r.points} pts</span><button class="sm" data-a="redeem" data-v="${r.id}">Redeem</button><button class="sm" data-a="redeemDel" data-v="${r.id}">✕</button></li>`).join('')}</ul>` : '<p class="muted">e.g. “30 min screen time”, “Pick dinner”.</p>'}
   <div class="row" style="margin-top:10px"><input data-bind="RW:rname" placeholder="Reward" value="${esc(FORMS.RW.rname)}"><input data-bind="RW:rpts" type="number" inputmode="numeric" placeholder="Points" style="max-width:120px" value="${esc(FORMS.RW.rpts)}"><button class="ghost" style="flex:0" data-a="redeemAdd">Add</button></div></div>
 <h3>How points are earned</h3>
-<div class="card kv"><span>Finish a lesson (8+ minutes, once a week each), by check score</span><b>${CONFIG.POINTS.lessonBase / 2}–${CONFIG.POINTS.lessonBase}</b><span>Each correct answer</span><b>${CONFIG.POINTS.perCorrect}</b><span>Perfect check</span><b>${CONFIG.POINTS.perfectCheck}</b><span>Bonus lesson (after the ${CONFIG.WEEK_GOAL}), by check score</span><b>${CONFIG.POINTS.lessonBase / 2 * CONFIG.BONUS_MULT}–${CONFIG.POINTS.lessonBase * CONFIG.BONUS_MULT}</b><span>Pencil work, self-corrections, short lessons</span><b>0</b></div>
+<div class="card kv"><span>Finish a lesson (8+ minutes, once a week each), by final test score</span><b>${CONFIG.POINTS.lessonBase / 2}–${CONFIG.POINTS.lessonBase}</b><span>Each right answer on the final test</span><b>${CONFIG.POINTS.perCorrect}</b><span>Perfect final test</span><b>${CONFIG.POINTS.perfectCheck}</b><span>Bonus lesson (after the ${CONFIG.WEEK_GOAL}), by final test score</span><b>${CONFIG.POINTS.lessonBase / 2 * CONFIG.BONUS_MULT}–${CONFIG.POINTS.lessonBase * CONFIG.BONUS_MULT}</b><span>Practice, paper work, self-corrections, short lessons</span><b>0</b></div>
 <p class="muted"><small>Lesson points wait until you accept the result (Home → results to check).</small></p>
 <h3>History</h3><div class="card">${S.points.log.length ? `<ul class="list">${S.points.log.slice(-15).reverse().map(x => `<li class="item"><div class="grow"><div class="t">${esc(x.why)}</div><div class="s">${new Date(x.t).toLocaleString()}</div></div><b>${x.n > 0 ? '+' : ''}${x.n || ''}</b></li>`).join('')}</ul>` : '<p class="muted">Nothing yet.</p>'}</div>`;
 };
@@ -2651,6 +2727,7 @@ function importData(file) {
       S.settings = Object.assign(DEFAULT_STATE().settings, d.settings, { apiKey: keep.apiKey || '', pin: keep.pin || d.settings.pin || null, welcomed: true, sync: keep.sync });
       syncForgetBase(); // a restore is combined with the shared copy, never used to delete things on other devices
       S.points = Object.assign(DEFAULT_STATE().points, d.points); S.streak = Object.assign(DEFAULT_STATE().streak, d.streak || {});
+      migrateResults(S.results);
       save(); toast('Restored ✓'); go('momHome');
     } catch (e) { toast('That file isn’t a backup from this app.'); }
   };
@@ -2739,6 +2816,7 @@ function applyShared(m) {
   // A lesson paid on one device and refused on the other: the payment stands, so show it as paid.
   const paid = new Set(S.points.log.map(x => x.id));
   S.results.forEach(r => { if (r.rejected && paid.has('acc-' + r.id)) delete r.rejected; });
+  migrateResults(S.results); // a device still on v17 may have sent results scored the old way
   S.attempt = attempt; S.savedAt = savedAt;
   SYNC.applying = true; save(); SYNC.applying = false;
 }
