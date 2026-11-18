@@ -182,7 +182,7 @@ async function play(page, { minutes = 15, wrong = [], explainDifferently = false
     await tick(page, per);
     if (st.interject != null && st.k === 'practice' && !st.fb) { await act(page, 'endInterject'); continue; }
     if (st.k === 'explain') { if (explainDifferently) { explainDifferently = false; await act(page, 'explainDiff', '0'); await page.waitForFunction(() => !EXPLAINING); } await act(page, 'next'); continue; }
-    if (st.k === 'passage') { await act(page, 'next'); continue; }
+    if (st.k === 'passage' || st.k === 'fixintro') { await act(page, 'next'); continue; }
     if (st.k === 'example') { if (st.shown < st.ex) await act(page, 'revealStep'); else await act(page, 'next'); continue; }
     if (st.k === 'pencil') {
       if (st.phase === 'work') { await tick(page, 46e3); await page.waitForFunction(() => !document.querySelector('#doneBtn').disabled, null, { timeout: 5000 }); await act(page, 'pencilDone'); }
@@ -297,11 +297,17 @@ test('wrong answers: feedback, cause tag, mistakes notebook, review flow', async
   eq(r.mastery, 67, 'mastery');
   eq(r.causes.slip, 2, 'causes recorded');
   const nb = await page.evaluate(() => S.notebook.map(n => n.q.prompt).sort());
-  eq(nb, ['What is 3 + 4?', 'Which shows three quarters?'], 'notebook has both');
-  ok((await text(page)).includes('Review your mistakes (2)'), 'review button on reward');
-  await act(page, 'startReview', ids[0]);
+  eq(nb, ['Which shows three quarters?'], 'notebook keeps the test miss only (practice misses are handled in the lesson)');
+  ok((await text(page)).includes('Fix my test mistakes (2 quick questions)'), 'fix-up button on reward');
+  await act(page, 'startFix', r.id);
+  eq(await play(page, { minutes: 2 }), 'reviewDone', 'fix-up completes');
+  ok((await text(page)).includes('Fix-up done'), 'fix-up done screen');
+  // the exact test question comes back tomorrow in spaced review
+  await tick(page, DAY); await page.evaluate(() => go('kidHome'));
+  ok((await text(page)).includes('Review your mistakes (1)'), 'spaced review tomorrow');
+  await act(page, 'startReview');
   eq(await play(page, { minutes: 2 }), 'reviewDone', 'review completes');
-  ok((await text(page)).includes('Review done'), 'review done screen');
+  ok((await text(page)).includes('Review done') && !(await text(page)).includes('points'), 'review done screen, no points');
   return page;
 });
 
@@ -669,8 +675,7 @@ test('self-grading: pencil and "means the same" earn nothing, Mom sees self-corr
   await page.fill('#shortIn', 'the top one'); await act(page, 'answerShort');
   await act(page, 'meantThat');
   eq(await page.evaluate(() => S.attempt.pts), before, 'no points for a self-correction');
-  ok(await page.evaluate(() => S.review.some(r => r.q.prompt === 'Name the top number of a fraction.')), 'the mistake stays in her review');
-  ok(await page.evaluate(() => S.notebook.some(n => n.q.prompt === 'Name the top number of a fraction.')), 'and in her notebook');
+  ok(!(await page.evaluate(() => S.review.some(r => r.q.prompt === 'Name the top number of a fraction.'))), 'a practice miss is not queued for review');
   await play(page, { minutes: 12 });
   const r = await S(page, 'S.results[0]');
   eq(r.selfCorrected.map(x => x.given), ['the top one'], 'recorded on the result');
@@ -706,11 +711,11 @@ test('mistakes notebook no longer shows the answers', async () => {
   const { page, ids } = await freshWithLessons(['Topic A']);
   await page.evaluate(id => addToWeek(id, true), ids[0]);
   await kidLogin(page);
-  await kidDoes(page, ids[0], { minutes: 10, wrong: ['What is 3 + 4?'] });
+  await kidDoes(page, ids[0], { minutes: 10, wrong: ['What is 10 - 4?'] });
   await page.evaluate(() => go('notebook'));
   const t = await text(page);
-  ok(t.includes('What is 3 + 4?') && t.includes('missed 1×'), 'mistake listed');
-  ok(!/answer:\s*7/.test(t), 'answer hidden');
+  ok(t.includes('What is 10 - 4?') && t.includes('missed 1×'), 'mistake listed');
+  ok(!/answer:\s*6/.test(t), 'answer hidden');
   return page;
 });
 
@@ -1319,6 +1324,49 @@ test('flagging a practice question just gives her the next practice question (no
   ok(after.q && after.q !== before.q && !after.fb, 'a new practice question is waiting: ' + after.q);
   ok((await text(page)).includes('Practice · 4 of 4'), 'it takes the place of the flagged one');
   eq(await page.evaluate(() => S.flags.length), 1, 'flag recorded for Mom');
+  return page;
+});
+
+test('fix-up after the test: 2–3 similar questions, wrong again just explains why, no loop, no points; Mom sees how it went', async () => {
+  const { page, ids } = await freshWithLessons(['Topic A', 'Topic B']);
+  await page.evaluate(ids => ids.forEach(id => addToWeek(id, true)), ids);
+  await kidLogin(page);
+  // one test miss -> 2 similar questions (same idea as the missed one), never the same question
+  const r1 = await kidDoes(page, ids[0], { minutes: 10, wrong: ['What is 10 - 4?', 'Which is one half?'] });
+  const plan = await page.evaluate(id => fixPlan(S.results.find(x => x.id === id)).map(q => q.prompt), r1.id);
+  eq(plan.length, 2, 'two questions for one miss');
+  ok(!plan.includes('What is 10 - 4?'), 'similar questions, not the same one: ' + plan);
+  ok(await page.evaluate(([id, plan]) => { const L = S.lessons[id]; const m = L.check.find(q => q.prompt === 'What is 10 - 4?'); return plan.every(p => [...L.practice, ...L.check].find(q => q.prompt === p).explainRef === m.explainRef); }, [ids[0], plan]), 'on the same idea');
+  const bal = await page.evaluate(() => [S.points.balance, pendingPts()]);
+  await act(page, 'startFix', r1.id);
+  let t = await text(page);
+  ok(t.includes('What is 10 - 4?') && t.includes('You said: 999') && t.includes('Answer: 6'), 'starts by showing the test mistake with the answer');
+  await act(page, 'next');
+  // gets both wrong: each time she sees why and moves on
+  for (let i = 0; i < 2; i++) {
+    const q = await page.evaluate(() => { const q = curQ(); return { type: q.type, prompt: q.prompt, choices: q.choices, answer: q.answer, pairs: q.pairs, items: q.items, n: q.n, min: q.min, max: q.max, target: q.target }; });
+    ok((await text(page)).includes(`Fix-up · ${i + 1} of 2`), 'label');
+    await answer(page, q, await page.evaluate(() => S.attempt.sub.shuf), true);
+    t = await text(page);
+    ok(t.includes('here’s why') && t.includes('Answer:'), 'wrong: explains why');
+    await act(page, 'next');
+  }
+  eq(await page.evaluate(() => view.name), 'reviewDone', 'done after 2, no repeat loop');
+  ok((await text(page)).includes('Fix-up done') && (await text(page)).includes('0 of 2'), 'done screen');
+  eq(await page.evaluate(() => [S.points.balance, pendingPts()]), bal, 'no points');
+  eq(await page.evaluate(id => S.results.find(x => x.id === id).fix, r1.id).then(f => [f.done, f.right, f.total]), [true, 0, 2], 'stored on the result');
+  ok(!(await text(page)).includes('Fix my test'), 'no fix-up button left');
+  // two test misses -> 3 questions; the button also waits on her home screen
+  const r2 = await kidDoes(page, ids[1], { minutes: 10, wrong: ['What is 10 - 4?', 'How many halves make a whole?'] });
+  eq(await page.evaluate(id => fixSize(S.results.find(x => x.id === id)), r2.id), 3, 'three questions for two misses');
+  await page.evaluate(() => go('kidHome'));
+  ok((await text(page)).includes('Fix my test mistakes: Topic B (3 quick questions)'), 'waiting on her home screen');
+  await act(page, 'startFix', r2.id);
+  eq(await play(page, { minutes: 2 }), 'reviewDone', 'all right this time');
+  ok((await text(page)).includes('3 of 3'), 'score');
+  await momLogin(page);
+  await page.evaluate(id => go('result', { id }), r1.id);
+  ok((await text(page)).includes('short fix-up on similar questions: 0 of 2 right'), 'Mom sees the fix-up');
   return page;
 });
 
