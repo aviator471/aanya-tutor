@@ -332,6 +332,8 @@ const CONFIG = {
   AUTHOR_MAX_TOKENS: 32000,      // room for the extra thinking so lessons aren't cut off
   // Model for the "Explain it differently" button.
   EXPLAIN_MODEL: 'claude-haiku-5-5',
+  CHECK_FULL: 6,   // a normal lesson's final test has at least this many questions (the prompt asks 6–8)
+  CHECK_SHORT: 3,  // a short catch-up-plan lesson's final test
   EXPLAIN_CAP: 3,                // max "explain differently" taps per lesson
   API_URL: 'https://api.anthropic.com/v1/messages',
   POINTS: { lessonBase: 100, perCorrect: 5, streakBonus: 50, streakEvery: 3, perfectCheck: 50 },
@@ -345,7 +347,7 @@ const CONFIG = {
   WEEK_MIN_MINUTES: 8,           // a finished lesson counts toward the week only with at least this much real work
   WEEK_BONUS: 2,                 // bonus slots Mom can add after the 3 (they unlock once 3 are done)
   BONUS_MULT: 2,                 // a bonus lesson's base points are multiplied by this
-  VERSION: 'v19 · 19 Nov',        // shown on the first screen so you can tell which copy you are running
+  VERSION: 'v20 · 19 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -874,7 +876,7 @@ A.nudgeAssign = id => A.assignLesson(id);
 A.nudgeMake = () => {
   const nd = planNext() || nudge(); if (!nd || !nd.make) return;
   if (!S.settings.apiKey) { toast('First add your Claude key in Settings.'); go('settings'); return; }
-  startGen({ subject: nd.subject, expCode: nd.make.expCode || '', mode: 'topic', topic: nd.make.topic, text: '', file: null, split: false, short: true, autoAssign: true, planStepId: nd.make.planStepId });
+  startGen({ subject: nd.subject, expCode: nd.make.expCode || '', mode: 'topic', topic: nd.make.topic, text: '', file: null, split: false, short: !!nd.plan, autoAssign: true, planStepId: nd.make.planStepId }); // only a catch-up plan step is a short lesson; a plain suggestion is a full one
 };
 /* ---------- Report: how she is doing, written by the app (no API) ---------- */
 const WIN_DAYS = 30;
@@ -1016,7 +1018,7 @@ function tabbar(active) {
 function homeHero() {
   const nd = planNext() || nudge();
   if (!nd) return `<div class="hero s-math"><span class="mark">✨</span><div class="eyebrow">Let’s begin</div><h1>Make ${esc(kidName())}’s first lesson</h1><p>Type a topic, paste a worksheet, or snap a photo.</p><button class="go" data-a="newLesson">＋ New lesson</button></div>`;
-  const L = nd.lesson, mins = L ? estMinutes(L) : 18;
+  const L = nd.lesson, mins = L ? estMinutes(L) : nd.plan ? 18 : 30;
   const title = L ? L.meta.title : nd.title || `New ${SUBJECTS[nd.subject].label} lesson`;
   const btn = L ? `<button class="go" data-a="nudgeAssign" data-v="${L.id}">＋ Add to this week</button>` : `<button class="go" data-a="nudgeMake">Make &amp; add to this week</button>`;
   return `<div class="hero s-${nd.subject}"><span class="mark">${SUBJECTS[nd.subject].emoji}</span>
@@ -1297,6 +1299,26 @@ async function addActivities(L) {
   if (!made.length) throw new Error('BAD_LESSON');
   L.practice.push(...made); return made.length;
 }
+/* A normal lesson's final test must be full length. If Claude wrote too few usable test questions
+   (for example short-answer ones, which the test can't use), write the missing ones. */
+const isShortLesson = L => !!(L.meta.short || (S.plan && S.plan.steps.some(st => st.lessonId && st.lessonId === L.id)));
+const checkWant = L => isShortLesson(L) ? CONFIG.CHECK_SHORT : CONFIG.CHECK_FULL;
+const CHECK_TOPUP_SYSTEM = `TEST TOP-UP. You write final-test questions for a Grade 5 student (age 10) in Ontario, Canada. Return ONE JSON object and nothing else: {"check":[ ... ]} (no markdown, no comments). Only types "mcq" (3–4 "choices", "answer" is one of them word for word) and "numeric" ("answer" a number; for math add "expr", the arithmetic that gives it). Each has "type", "tier" (mostly 2), "prompt" (max 30 words, never containing the answer), "explanationWrong" (one kind sentence), "explainRef" (0-based index of the explain card it tests). Cover the lesson's concepts, mostly ones the existing test questions miss. Work every answer out carefully; a wrong key marks a child wrong when she is right. Friendly, kid-level language. Content is neutral and secular.`;
+async function addChecks(L, n, signal) {
+  const have = new Set([...L.practice, ...L.check].map(q => q.prompt.toLowerCase()));
+  const text = await callClaude({ model: CONFIG.AUTHOR_MODEL, effort: 'low', maxTokens: 4000, system: CHECK_TOPUP_SYSTEM, signal,
+    content: [{ type: 'text', text: `Write exactly ${n} new test question${n === 1 ? '' : 's'}.\nSubject: ${SUBJECTS[L.meta.subject]?.label}. Lesson: ${L.meta.title}.\n${L.passage ? 'Reading passage (the questions are about it):\n' + L.passage.text + '\n' : ''}What is taught:\n${L.concepts.join('\n')}\nExplain cards:\n${L.explain.map((c, i) => i + ': ' + c.text).join('\n')}\nQuestions already in the lesson (don't repeat them):\n${[...L.check, ...L.practice].map(q => q.prompt).join('\n').slice(0, 3000)}` }] });
+  const out = extractJSON(text), dropped = [], made = [], tag = 't' + Date.now().toString(36);
+  arr(out.check).forEach((q, i) => {
+    if (made.length >= n) return;
+    const x = normQ(Object.assign({}, q, { exp: '' }), tag + i, dropped, true);
+    if (!x || have.has(x.prompt.toLowerCase())) return;
+    x.exp = matchCode(L.meta.subject, str(q.exp)) || L.meta.expectations[0] || ''; x.explainRef = clamp(x.explainRef, 0, L.explain.length - 1);
+    have.add(x.prompt.toLowerCase()); made.push(x);
+  });
+  if (!made.length) throw new Error('BAD_LESSON');
+  L.check.push(...made); return made;
+}
 /* ---------- Answer-key check: a second model answers every question without seeing the key ---------- */
 const KEYCHECK_SYSTEM = `ANSWER-KEY CHECK. You are checking a Grade 5 (Ontario) worksheet. Answer every question yourself, carefully. Return ONE JSON object and nothing else: {"answers":[{"id": string, "answer": ...}]}.
 - mcq: "answer" is the exact text of the correct choice.
@@ -1361,6 +1383,9 @@ async function authorLesson(req, onProgress, signal) {
       const out = extractJSON(text);
       const lesson = normalizeLesson(out.lesson || out, req.subject);
       if (lesson.practice.filter(q => WIDGETS.includes(q.type)).length < 2) { try { await addActivities(lesson); } catch (e) { /* keep the lesson without them */ } }
+      lesson.meta.short = !!req.short;
+      const missing = checkWant(lesson) - lesson.check.length;
+      if (missing > 0) { try { await addChecks(lesson, missing, signal); } catch (e) { if (e.name === 'AbortError') throw e; /* Mom sees "Add test questions" on the lesson */ } }
       const target = req.expCode || (req.seq && req.seq.expCode);
       if (target && !lesson.meta.expectations.includes(target)) lesson.meta.expectations.unshift(target);
       [...lesson.practice, ...lesson.check].forEach(q => { if (!q.exp) q.exp = lesson.meta.expectations[0] || ''; });
@@ -1589,7 +1614,8 @@ VIEWS.summary = ({ id }) => {
   <h3>What she’ll practice</h3>
   ${m.forMom ? `<p>${esc(m.forMom)}</p>` : ''}
   ${keyCheckCard(L)}
-  <p class="muted">${L.practice.length} practice questions (easy → harder) · ${L.offscreen.length} pencil tasks · ${L.check.length}-question check · about ${estMinutes(L)} min</p>
+  <p class="muted">${L.practice.length} practice questions (easy → harder) · ${L.offscreen.length} pencil tasks · ${L.check.length}-question final test${isShortLesson(L) ? ' (short catch-up lesson)' : ''} · about ${estMinutes(L)} min</p>
+  ${L.check.length < checkWant(L) ? `<div class="card" style="border:2px solid var(--accent)"><b>The final test has only ${L.check.length} question${L.check.length === 1 ? '' : 's'}.</b> A full lesson has ${CONFIG.CHECK_FULL}–8.<button class="ghost" style="margin-top:10px" data-a="topUpChecks" data-v="${id}">Add ${checkWant(L) - L.check.length} test questions (a few cents)</button></div>` : ''}
   <button class="big primary" data-a="startLesson" data-v="${id}">▶ ${L.status === 'done' ? 'Do it again' : inWeek(id) ? 'Hand it to ' + esc(kidName()) : 'START'}</button>
   <div class="row">
     ${S.results.some(r => r.lessonId === id) ? `<button class="ghost" data-a="freshQs" data-v="${id}">🔄 New questions for a redo</button>` : ''}
@@ -1616,13 +1642,28 @@ A.freshQs = async (id, el) => {
   if (!confirm('Write new practice and check questions for this lesson? It uses a few cents. The teaching cards stay the same.')) return;
   el.disabled = true; el.textContent = 'Writing new questions… keep this screen open'; await writeStart();
   try {
-    const out = await authorLesson({ subject: L.meta.subject, mode: 'topic', expCode: L.meta.expectations[0] || '', topic: `${L.meta.title}. Same concepts as before: ${L.concepts.join('; ')}. Write NEW practice, pencil and check questions; do not repeat these: ${[...L.practice, ...L.check].map(q => q.prompt).join(' | ').slice(0, 3000)}`, text: '', file: null, split: false });
+    const out = await authorLesson({ subject: L.meta.subject, mode: 'topic', short: isShortLesson(L), expCode: L.meta.expectations[0] || '', topic: `${L.meta.title}. Same concepts as before: ${L.concepts.join('; ')}. Write NEW practice, pencil and check questions; do not repeat these: ${[...L.practice, ...L.check].map(q => q.prompt).join(' | ').slice(0, 3000)}`, text: '', file: null, split: false });
     const N = out.lesson, v = (L.qVersion || 1) + 1;
     [...N.practice, ...N.check].forEach(q => { q.id = 'v' + v + q.id; });
     if (N.keyCheck) N.keyCheck.issues.forEach(x => { x.qid = 'v' + v + x.qid; });
     Object.assign(L, { practice: N.practice, check: N.check, offscreen: N.offscreen.length ? N.offscreen : L.offscreen, keyCheck: N.keyCheck, qVersion: v });
+    L.meta.short = isShortLesson(L);
     save(); toast('New questions ready.');
   } catch (e) { toast(writeError(e)); } finally { writeEnd(); }
+  render();
+};
+A.topUpChecks = async (id, el) => {
+  const L = S.lessons[id]; if (!L) return;
+  if (!S.settings.apiKey) { toast('Add your Claude key in Settings first.'); return; }
+  const n = checkWant(L) - L.check.length; if (n <= 0) { render(); return; }
+  el.disabled = true; el.textContent = 'Writing test questions… keep this screen open'; await writeStart();
+  try {
+    const made = await addChecks(L, n);
+    // the second model checks only the new keys, so Mom's earlier decisions stay
+    if (!L.keyCheck || L.keyCheck.status === 'error') await runKeyCheck(L); // never checked: check them all
+    else try { const k = await checkKeys({ meta: L.meta, passage: L.passage, practice: [], check: made }); const kc = L.keyCheck; kc.issues.push(...k.issues); kc.status = kc.issues.length ? 'issues' : 'ok'; kc.at = Date.now(); L.keyCheck = kc; } catch (e) { /* keys still pass the built-in checks */ }
+    save(); toast(`Added ${made.length} test question${made.length === 1 ? '' : 's'}.`);
+  } catch (e) { toast(e.message === 'BAD_LESSON' ? 'Couldn’t make good ones this time. Try again.' : writeError(e)); } finally { writeEnd(); }
   render();
 };
 A.addFun = async (id, el) => {
