@@ -117,7 +117,7 @@ const act = (page, a, v) => tap(page, v == null ? `[data-a="${a}"]` : `[data-a="
 const S = (page, fn = 'S') => page.evaluate(fn);
 const text = page => page.locator('#app').textContent(); // textContent ignores CSS uppercase
 
-/* Mom set-up through the real screens: PIN, welcome (name + key). */
+/* Mom set-up through the real screens: PIN, welcome (name), then the key once in Settings. */
 async function momSetup(page, pin = '1234') {
   await act(page, 'pickMom');
   for (const d of pin) await act(page, 'pinKey', d);
@@ -125,9 +125,12 @@ async function momSetup(page, pin = '1234') {
   for (const d of pin) await act(page, 'pinKey', d);
   await page.waitForFunction(() => view.name === 'welcome');
   await page.fill('[data-bind="W:name"]', 'Aanya');
-  await page.fill('[data-bind="W:key"]', 'sk-ant-test-key');
   await act(page, 'welcomeSave');
   await page.waitForFunction(() => view.name === 'momHome');
+  await page.evaluate(() => go('settings'));
+  await page.fill('[data-bind="ST:key"]', 'sk-ant-test-key');
+  await act(page, 'saveKey');
+  await page.evaluate(() => go('momHome'));
 }
 async function momLogin(page, pin = '1234') {
   await page.evaluate(() => { role = null; go('gate'); });
@@ -894,6 +897,61 @@ test('if the iPad sleeps mid-writing, Mom is told that instead of "check the Wi-
   return page;
 });
 
+test('API key: never asked on her screens; an empty copy says "Ask Mom" with no key box; the key is set once in Settings and stays', async () => {
+  const page = await open();
+  const t0 = await text(page);
+  ok(t0.includes('Ask Mom'), 'empty copy tells her to ask Mom');
+  eq(await page.locator('[data-a="pickKid"]').count(), 0, 'no kid button on an empty copy');
+  eq(await page.locator('input[type="password"], [data-bind$=":key"]').count(), 0, 'no key box on the first screen');
+  await act(page, 'pickMom');
+  for (const d of '1234') await act(page, 'pinKey', d);
+  await page.waitForFunction(() => view.name === 'pin' && view.p.mode === 'set2');
+  for (const d of '1234') await act(page, 'pinKey', d);
+  await page.waitForFunction(() => view.name === 'welcome');
+  eq(await page.locator('[data-bind="W:key"], input[type="password"]').count(), 0, 'welcome asks for the name only');
+  await page.fill('[data-bind="W:name"]', 'Aanya');
+  await act(page, 'welcomeSave');
+  ok((await text(page)).includes('Add your Claude key'), 'Mom home points her to Settings for the key');
+  // Before the key: Aanya's "explain differently" just says ask Mom, no key box.
+  const id = (await seedLessons(page, ['Topic Nokey']))[0];
+  await page.evaluate(id => { addToWeek(id, true); save(); }, id);
+  await kidLogin(page);
+  ok((await text(page)).includes('Topic Nokey'), 'she sees her lesson');
+  await act(page, 'kidStart', id);
+  await page.waitForFunction(() => view.name === 'play');
+  for (let i = 0; i < 6 && !(await page.locator('[data-a="explainDiff"]').count()); i++) await act(page, 'next');
+  await act(page, 'explainDiff', '0');
+  ok((await page.locator('#toast, .toast').last().textContent()).includes('Ask Mom'), 'kid toast says ask Mom');
+  eq(await page.locator('input[type="password"]').count(), 0, 'no key box on her screens');
+  eq(page.calls.length, 0, 'no Claude call without a key');
+  await page.evaluate(() => { S.attempt = null; save(); });
+  // Mom adds it once in Settings.
+  await momLogin(page);
+  await page.evaluate(() => go('settings'));
+  await page.fill('[data-bind="ST:key"]', 'sk-ant-once');
+  await act(page, 'saveKey');
+  ok((await text(page)).includes('…once') && (await text(page)).includes('stays'), 'Settings shows the saved key');
+  // Browser restart: a new tab in the same browser profile, and the page is reloaded.
+  const tab = await page.context().newPage();
+  await tab.clock.setFixedTime(page.now); await tab.goto(FILE);
+  eq(await tab.evaluate(() => S.settings.apiKey), 'sk-ant-once', 'key still there after reopening');
+  ok(!(await text(tab)).includes('Ask Mom'), 'normal first screen, not the empty-copy screen');
+  await tab.close();
+  await page.reload();
+  eq(await page.evaluate(() => [S.settings.apiKey, view.name]), ['sk-ant-once', 'gate'], 'key still there after reload');
+  return page;
+});
+
+test('sync: a shared copy without the key never removes the key saved on this device', async () => {
+  const page = await open();
+  await momSetup(page);
+  await page.evaluate(() => { const m = syncData(S); m.settings.apiKey = ''; m.order = ['x']; applyShared(m); });
+  eq(await page.evaluate(() => S.settings.apiKey), 'sk-ant-test-key', 'key kept');
+  await page.evaluate(() => { const m = syncData(S); m.settings.apiKey = 'sk-ant-new'; applyShared(m); });
+  eq(await page.evaluate(() => S.settings.apiKey), 'sk-ant-new', 'a real new key from the other device is taken');
+  return page;
+});
+
 test('Settings suggests a dedicated key with a spend limit', async () => {
   const page = await open();
   await momSetup(page);
@@ -922,7 +980,7 @@ test('offline: the app opens from cache when there is no internet (service worke
     await page.waitForFunction(() => !!navigator.serviceWorker.controller);
     await ctx.setOffline(true);
     await page.reload();
-    ok((await page.locator('#app').textContent()).includes('Who’s using this?'), 'app opened offline');
+    ok((await page.locator('#app').textContent()).includes('Ask Mom to open this'), 'app opened offline');
     const sw = fs.readFileSync(path.join(root, 'sw.js'), 'utf8');
     ok(/url\.origin !== self\.location\.origin\) return/.test(sw), 'never handles other sites (Claude calls)');
   } finally { await ctx.setOffline(false); server.close(); }
