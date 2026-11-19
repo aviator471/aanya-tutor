@@ -19,7 +19,8 @@
        website's saved data after about 7 days without a visit; the
        Home Screen app is safe from that. (The Home Screen app keeps its
        own data, separate from the Safari tab.)
-    3. Tap "Mom", create a 4-digit PIN, and paste your Claude API key.
+    3. Tap "Set up from scratch", create a 4-digit PIN, then paste your Claude API key
+       in Settings (once; it stays, and sync carries it to your other devices).
 
   THE CLAUDE API KEY  (no key goes in this file)
     - Get a key at https://console.anthropic.com -> API Keys. Add a small
@@ -344,7 +345,7 @@ const CONFIG = {
   WEEK_MIN_MINUTES: 8,           // a finished lesson counts toward the week only with at least this much real work
   WEEK_BONUS: 2,                 // bonus slots Mom can add after the 3 (they unlock once 3 are done)
   BONUS_MULT: 2,                 // a bonus lesson's base points are multiplied by this
-  VERSION: 'v18 · 17 Nov',        // shown on the first screen so you can tell which copy you are running
+  VERSION: 'v19 · 19 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -370,6 +371,9 @@ const money = n => '$' + (Math.round(n * 100) / 100).toFixed(2);
 const fmtDate = t => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 const gcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) [a, b] = [b, a % b]; return a; };
 const near = (x, y) => Math.abs(x - y) <= 1e-6 * Math.max(1, Math.abs(x), Math.abs(y));
+// Ask the browser not to erase this app's storage when space runs low (Safari may still erase a
+// Safari-tab copy after about 7 days without a visit; the Home Screen icon is exempt).
+function askPersist() { try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {}); } catch (e) {} }
 const isStandalone = () => navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
 function setPath(obj, path, val) { const ks = path.split('.'); let o = obj; for (let i = 0; i < ks.length - 1; i++) o = o[ks[i]]; o[ks[ks.length - 1]] = val; }
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toast._t); toast._t = setTimeout(() => t.classList.remove('show'), 3200); }
@@ -629,7 +633,23 @@ A.go = v => go(v);
 /* ==================================================================
    Gate + PIN
    ================================================================== */
-VIEWS.gate = () => `
+// A copy of the app with nothing in it: a new device, the Safari copy when the real one lives in the
+// Home Screen icon (they don't share storage), or a copy Safari erased. Aanya can't do anything
+// useful here, so the screen is for Mom: bring everything back with the setup code, or start fresh.
+const isBlank = () => !S.settings.pin && !S.settings.sync && !S.order.length && !S.results.length;
+VIEWS.gate = () => isBlank() ? `
+<div class="center-screen">
+  <div class="logo">⭐</div>
+  <h1>Ask Mom to open this</h1>
+  <p class="muted">This copy of the app is empty.${!isStandalone() ? ' If you usually tap the ⭐ icon on the Home Screen, close this and use the icon.' : ''}</p>
+  <div style="max-width:420px;margin:32px auto 0;text-align:left">
+    <p><b>For Mom</b></p>
+    <button class="big primary" data-a="go" data-v="join">Bring everything back (setup code)</button>
+    <p class="muted"><small>Already set up on another device? Join it with the setup code from Settings → Use on more devices. Lessons, progress, the PIN and the Claude key all come back.</small></p>
+    <button class="big ghost" data-a="pickMom">Set up from scratch</button>
+  </div>
+  <p class="muted" style="margin-top:36px"><small>${esc(CONFIG.VERSION)}</small></p>
+</div>` : `
 <div class="center-screen">
   <div class="logo">⭐</div>
   <h1>Who’s using this?</h1>
@@ -637,7 +657,6 @@ VIEWS.gate = () => `
     <button class="gate mom" data-a="pickMom"><span class="av">👩</span>Mom</button>
     <button class="gate kid" data-a="pickKid"><span class="av">🧒</span>${esc(kidName())}</button>
   </div>
-  ${!S.settings.pin && !S.settings.sync ? `<button class="link" style="margin-top:28px" data-a="go" data-v="join">Already set up on another device? Join it</button>` : ''}
   <p class="muted" style="margin-top:36px"><small>${esc(CONFIG.VERSION)}</small></p>
 </div>`;
 A.pickKid = () => { role = 'kid'; go('kidHome'); };
@@ -705,17 +724,15 @@ A.forgotReset = () => {
    Mom: first-run welcome
    ================================================================== */
 VIEWS.welcome = () => {
-  FORMS.W = { name: S.settings.learnerName, key: '' };
+  FORMS.W = { name: S.settings.learnerName };
   return `
 <div class="topbar"><span class="who">👋 Welcome</span></div>
 <div class="card">
-  <h1>Two quick things</h1>
+  <h1>One quick thing</h1>
   <p class="muted">One time only.</p>
   <label>Your daughter's first name</label>
   <input data-bind="W:name" value="${esc(S.settings.learnerName)}" placeholder="First name" autocomplete="off">
-  <label>Your Claude API key</label>
-  <input data-bind="W:key" type="password" placeholder="sk-ant-..." autocomplete="off">
-  <p class="muted"><small>Get one at console.anthropic.com → API Keys. It is saved only on this iPad, behind your PIN.</small></p>
+  <p class="muted"><small>The Claude key goes in Settings, once. It stays there and is never asked for again.</small></p>
   ${!isStandalone() ? `<div class="banner"><p>📲 <b>Tip:</b> tap Share → <b>Add to Home Screen</b> and use the app from that icon. It keeps progress from being erased.</p></div>` : ''}
   <button class="big primary" data-a="welcomeSave">Save</button>
   <button class="link" data-a="welcomeSkip">Skip for now</button>
@@ -723,7 +740,6 @@ VIEWS.welcome = () => {
 };
 A.welcomeSave = () => {
   S.settings.learnerName = str(FORMS.W.name);
-  if (str(FORMS.W.key)) S.settings.apiKey = cleanKey(FORMS.W.key);
   S.settings.welcomed = true; save(); go('momHome');
 };
 A.welcomeSkip = () => { S.settings.welcomed = true; save(); go('momHome'); };
@@ -2414,7 +2430,7 @@ let EXPLAINING = false;
 A.explainDiff = async i => {
   const a = S.attempt, L = curLesson(); i = +i;
   if (EXPLAINING || (L.explainUsed || 0) >= CONFIG.EXPLAIN_CAP) return;
-  if (!S.settings.apiKey) { toast('This button needs Mom to add the Claude key.'); return; }
+  if (!S.settings.apiKey) { toast('This button isn’t ready yet. Ask Mom.'); return; }
   EXPLAINING = true; render();
   try {
     const card = L.explain[i], prev = a.alt[i] || [];
@@ -2725,7 +2741,8 @@ VIEWS.settings = () => {
 <div class="topbar"><span class="who">Settings</span><span></span></div>
 <div class="card"><ul class="list"><li class="item" data-a="go" data-v="rewards" style="cursor:pointer"><div class="grow t">🎁 Rewards &amp; points</div><span class="muted">›</span></li><li class="item" data-a="go" data-v="flags" style="cursor:pointer"><div class="grow t">🚩 Flagged questions</div><span class="muted">›</span></li></ul></div>
 <div class="card"><h2>Claude key</h2>
-<p class="muted">${k ? `Saved on this ${S.settings.sync ? 'device and shared with your synced devices' : 'iPad'} (ends in …${esc(k.slice(-4))}).` : 'Not added yet. Get one at console.anthropic.com → API Keys.'}</p>
+<p class="muted">${k ? `✓ Saved on this ${S.settings.sync ? 'device and shared with your synced devices' : 'iPad'} (ends in …${esc(k.slice(-4))}). It stays until you replace it.` : 'Not added yet. Get one at console.anthropic.com → API Keys. You only do this once.'}</p>
+${k && !S.settings.sync ? `<p class="muted"><small>If Safari ever erases this iPad’s copy, everything is gone, key included. Turn on <b>Use on more devices</b> below: then one setup code brings it all back.</small></p>` : ''}
 <input data-bind="ST:key" type="password" placeholder="${k ? 'Paste a new key to replace it' : 'sk-ant-...'}" autocomplete="off">
 <div class="row" style="margin-top:10px"><button class="ghost" data-a="saveKey">Save key</button>${k ? `<button class="ghost" data-a="testKey">Test it</button>` : ''}</div>
 <p class="muted"><small>Lessons use ${esc(CONFIG.AUTHOR_MODEL)}. “Explain it differently” uses ${esc(CONFIG.EXPLAIN_MODEL)}.</small></p>
@@ -2738,7 +2755,7 @@ ${syncCard()}
 ${!isStandalone() ? `<div class="card"><h2>Keep progress safe</h2><p>On the iPad, tap Share → <b>Add to Home Screen</b> and open the app from that icon. Safari can erase website data after about a week without a visit; the Home Screen app is protected. The icon starts empty, so save a backup here first and restore it there.</p></div>` : ''}
 <div class="card"><h2>Start over</h2><button class="ghost danger" data-a="eraseAll">Erase everything on this iPad</button></div>`;
 };
-A.saveKey = () => { const k = cleanKey(FORMS.ST.key); if (!k) { toast('Paste the key first.'); return; } if (!/^sk-ant-/.test(k) && !confirm('That doesn’t look like a Claude key (they start with sk-ant-). Save anyway?')) return; S.settings.apiKey = k; save(); toast('Key saved.'); render(); pumpSequences(); };
+A.saveKey = () => { const k = cleanKey(FORMS.ST.key); if (!k) { toast('Paste the key first.'); return; } if (!/^sk-ant-/.test(k) && !confirm('That doesn’t look like a Claude key (they start with sk-ant-). Save anyway?')) return; S.settings.apiKey = k; save(); askPersist(); toast('Key saved. You won’t be asked again.'); render(); pumpSequences(); };
 A.testKey = async (_, el) => {
   el.disabled = true; el.textContent = 'Testing…';
   try { await callClaude({ model: CONFIG.EXPLAIN_MODEL, maxTokens: 50, effort: 'low', system: 'Reply with the single word OK.', content: [{ type: 'text', text: 'Test' }] }); toast('The key works ✓'); }
@@ -2853,6 +2870,7 @@ function ledgerFix() {
 function ledgerTotals(log) { return log.reduce((a, x) => ({ balance: a.balance + (x.n || 0), earned: a.earned + (x.e != null ? x.e : Math.max(0, x.n || 0)) }), { balance: 0, earned: 0 }); }
 function applyShared(m) {
   const keepSettings = {}; SYNC_LOCAL.forEach(k => keepSettings[k] = S.settings[k]);
+  if (S.settings.apiKey && !(m.settings && m.settings.apiKey)) keepSettings.apiKey = S.settings.apiKey; // a copy without the key never removes it here
   const attempt = S.attempt, savedAt = S.savedAt;
   Object.keys(S).forEach(k => { if (!(k in m)) delete S[k]; });
   Object.assign(S, JSON.parse(JSON.stringify(m)));
@@ -3062,7 +3080,7 @@ function makeIcon() {
 load();
 if (S.settings.apiKey) { const ck = cleanKey(S.settings.apiKey); if (ck !== S.settings.apiKey) { S.settings.apiKey = ck; save(); } }
 makeIcon();
-if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+askPersist();
 document.addEventListener('visibilitychange', () => { if (S.attempt) { if (document.hidden) { touch(); save(); } else S.attempt.tick = Date.now(); } });
 if (/^#join=/.test(location.hash)) { const code = decodeURIComponent(location.hash.slice(6)); history.replaceState(null, '', location.href.split('#')[0]); if (!S.settings.sync) view = { name: 'join', p: { code } }; }
 render();
