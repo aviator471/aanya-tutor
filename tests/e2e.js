@@ -47,9 +47,16 @@ function lessonJSON(title, subject = 'math') {
     ],
   };
 }
+// Extra final-test questions the fake writes when the app asks to top up a short test.
+const TOPUP = [
+  { type: 'mcq', prompt: 'Which fraction is bigger?', choices: ['1/2', '1/8'], answer: '1/2', explanationWrong: 'Fewer parts means bigger parts.', explainRef: 1 },
+  { type: 'numeric', prompt: 'What is 5 + 5?', answer: '10', expr: '5+5', explanationWrong: 'Count on from 5.', explainRef: 0 },
+  { type: 'mcq', prompt: 'What is the bottom number of a fraction called?', choices: ['denominator', 'numerator'], answer: 'denominator', explanationWrong: 'The bottom number says how many parts.', explainRef: 1 },
+  { type: 'numeric', prompt: 'What is 9 - 3?', answer: '6', expr: '9-3', explanationWrong: 'Count back from 9.', explainRef: 0 },
+];
 // The fake second model "solves" a question by looking it up in the fixture above.
 function solve(q) {
-  const L = lessonJSON('x'), src = [...L.practice, ...L.check].find(x => x.prompt === q.question);
+  const L = lessonJSON('x'), src = [...L.practice, ...L.check, ...TOPUP].find(x => x.prompt === q.question);
   if (!src) return null;
   if (src.type === 'match') return src.pairs.map(p => p.b);
   if (src.type === 'sort') return src.items.map(i => i.bucket);
@@ -87,6 +94,12 @@ async function open({ time = WED, state, claudeCalls, init } = {}) {
       if (page.keyCheckFails) return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":{"message":"overloaded"}}' });
       const qs = JSON.parse(body.messages[0].content[0].text.split('Questions:\n')[1]);
       return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(JSON.stringify({ answers: qs.map(q => ({ id: q.id, answer: (page.badKeys || []).includes(q.question) ? 'something else' : solve(q) })) })) });
+    }
+    if (/TEST TOP-UP/.test(body.system || '')) {
+      page.topUps = (page.topUps || []).concat(all);
+      if (page.topUpFails) return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":{"message":"overloaded"}}' });
+      const n = +(all.match(/Write exactly (\d+)/) || [0, 3])[1];
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(JSON.stringify({ check: TOPUP.slice(0, n) })) });
     }
     if (page.dropWhileHidden && /sonnet/.test(body.model)) { // the iPad locks while the lesson is being written
       await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); });
@@ -261,12 +274,15 @@ test('Mom makes a lesson with Claude (faked) and it lands in this week', async (
   await momSetup(page);
   const id = await makeLesson(page, 'Topic Fractions');
   ok((await text(page)).includes('Topic Fractions'), 'summary shows the lesson');
-  eq(page.calls.filter(m => /sonnet/.test(m)).length, 1, 'one authoring call');
+  eq(page.calls.filter(m => /sonnet/.test(m)).length, 2, 'one authoring call + one call to top up the 3-question test');
+  eq((page.topUps || []).length, 1, 'the test was topped up once');
+  ok(page.topUps[0].includes('Write exactly 3 new test questions'), 'asked for the 3 missing test questions');
   eq(page.keyChecks, 1, 'answer keys checked once by the second model');
   ok((await text(page)).includes('Answer keys double-checked'), 'Mom sees the check passed');
   const L = await page.evaluate(id => S.lessons[id], id);
   eq(L.practice.length, 8, 'all 8 practice questions kept');
-  eq(L.check.length, 3, '3 check questions kept');
+  eq(L.check.length, 6, 'final test topped up to the full 6 questions');
+  eq(L.meta.short, false, 'a normal lesson, not a catch-up one');
   await page.evaluate(() => go('lessons'));
   await act(page, 'assignLesson', id);
   eq(await page.evaluate(() => S.week.core), [id], 'added to this week');
@@ -793,6 +809,7 @@ test('answer-key check: a disagreement blocks the lesson until Mom decides', asy
   const page = await open();
   await momSetup(page);
   page.badKeys = ['What is 3 + 4?', 'How many halves make a whole?', 'What is 10 - 4?'];
+  page.topUpFails = true; page.allowErrors = /status of 500/; // keep the 3-question test so the floor of 2 is reachable
   const id = await makeLesson(page, 'Topic Keys');
   ok((await text(page)).includes('Check 3 answers first'), 'Mom is shown the 3 disagreements');
   await page.evaluate(id => go('lessons'), id);
@@ -1425,6 +1442,68 @@ test('fix-up after the test: 2–3 similar questions, wrong again just explains 
   await momLogin(page);
   await page.evaluate(id => go('result', { id }), r1.id);
   ok((await text(page)).includes('short fix-up on similar questions: 0 of 2 right'), 'Mom sees the fix-up');
+  return page;
+});
+
+test('final test length: a normal lesson gets the full test, only catch-up lessons get 3', async () => {
+  const page = await open();
+  await momSetup(page);
+  // 1. Home "Suggested next" (not the catch-up plan) makes a FULL lesson
+  await page.evaluate(() => { go('momHome'); });
+  ok((await text(page)).includes('Suggested next') && (await text(page)).includes('About 30 min'), 'suggestion shows a full-length lesson');
+  const before = await page.evaluate(() => S.order.length);
+  page.prompts = [];
+  page.on('request', r => { if (/anthropic/.test(r.url())) page.prompts.push(r.postData() || ''); });
+  await act(page, 'nudgeMake');
+  await page.waitForFunction(n => S.order.length > n && view.name === 'summary', before, { timeout: 10000 });
+  const a = await page.evaluate(() => S.lessons[S.order[0]]);
+  ok(!page.prompts.some(p => p.includes('SHORT CATCH-UP LESSON')), 'a suggestion is not written as a short catch-up lesson');
+  eq([a.meta.short, a.check.length], [false, 6], 'suggested lesson: full 6-question final test');
+  ok((await text(page)).includes('6-question final test') && !(await text(page)).includes('The final test has only'), 'Mom sees a full test');
+  // 2. A catch-up plan step is a SHORT lesson and keeps its 3-question test (no top-up)
+  await page.evaluate(() => { S.plan = { id: 'p1', at: Date.now(), scope: 'all', steps: [{ id: 'st1', subject: 'science', title: 'Fix-it: Topic Plants', focus: 'plants', codes: [], gap: false, pct: 40, notes: '', lessonId: null, existing: false, est: 18 }] }; save(); go('momHome'); });
+  ok((await text(page)).includes('Catch-up plan'), 'catch-up plan on Home');
+  page.prompts = []; page.topUps = [];
+  await act(page, 'nudgeMake');
+  await page.waitForFunction(() => S.plan.steps[0].lessonId && view.name === 'summary', null, { timeout: 10000 });
+  const b = await page.evaluate(() => S.lessons[S.plan.steps[0].lessonId]);
+  ok(page.prompts.some(p => p.includes('SHORT CATCH-UP LESSON')), 'catch-up step asks for a short lesson');
+  eq([b.meta.short, b.check.length, page.topUps.length], [true, 3, 0], 'catch-up lesson: 3-question test, no top-up');
+  ok((await text(page)).includes('short catch-up lesson') && !(await text(page)).includes('The final test has only'), 'Mom sees it is a catch-up lesson');
+  // 3. Playing the normal lesson asks all 6 test questions
+  await page.evaluate(id => addToWeek(id, true), a.id);
+  await kidLogin(page);
+  const r = await kidDoes(page, a.id, { minutes: 15 });
+  eq([r.checkRight, r.checkTotal], [6, 6], 'she answered all 6 final-test questions');
+  return page;
+});
+
+test('final test length: an older lesson with a short test can be topped up by Mom', async () => {
+  const { page, ids } = await freshWithLessons(['Topic Short']);
+  eq(await page.evaluate(id => S.lessons[id].check.length, ids[0]), 3, 'old lesson has only 3 test questions');
+  await page.evaluate(id => go('summary', { id }), ids[0]);
+  ok((await text(page)).includes('The final test has only 3 questions'), 'Mom is told');
+  page.topUpFails = true; page.allowErrors = /status of 500/;
+  await act(page, 'topUpChecks', ids[0]);
+  await page.waitForTimeout(300);
+  eq(await page.evaluate(id => S.lessons[id].check.length, ids[0]), 3, 'a failed top-up changes nothing');
+  page.topUpFails = false;
+  await act(page, 'topUpChecks', ids[0]);
+  await page.waitForFunction(id => S.lessons[id].check.length === 6, ids[0]);
+  ok(!(await text(page)).includes('The final test has only'), 'warning gone');
+  const L = await page.evaluate(id => S.lessons[id], ids[0]);
+  eq(new Set(L.check.map(q => q.id)).size, 6, 'new questions have their own ids');
+  ok(L.check.every(q => q.type === 'mcq' || q.type === 'numeric'), 'only test-safe question types');
+  return page;
+});
+
+test('final test length: when the top-up fails while writing, the lesson is still saved and Mom is told', async () => {
+  const page = await open();
+  await momSetup(page);
+  page.topUpFails = true; page.allowErrors = /status of 500/;
+  const id = await makeLesson(page, 'Topic Fails');
+  eq(await page.evaluate(id => S.lessons[id].check.length, id), 3, 'lesson kept with its 3 questions');
+  ok((await text(page)).includes('The final test has only 3 questions'), 'Mom sees the short test and the fix button');
   return page;
 });
 
