@@ -347,7 +347,7 @@ const CONFIG = {
   WEEK_MIN_MINUTES: 8,           // a finished lesson counts toward the week only with at least this much real work
   WEEK_BONUS: 2,                 // bonus slots Mom can add after the 3 (they unlock once 3 are done)
   BONUS_MULT: 2,                 // a bonus lesson's base points are multiplied by this
-  VERSION: 'v20 · 19 Nov',        // shown on the first screen so you can tell which copy you are running
+  VERSION: 'v21 · 20 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -1032,6 +1032,7 @@ VIEWS.momHome = () => {
   const strip = [
     !S.settings.apiKey ? ['Add your Claude key to make lessons', 'settings', 'Add'] : null,
     syncTrouble() ? ['Sync isn’t working: ' + syncTrouble(), 'settings', 'Fix'] : null,
+    syncOthers().length ? ['Your devices may be using different shared copies', 'settings', 'Fix'] : null,
     pend.length ? [`${pend.length} result${pend.length > 1 ? 's' : ''} to check`, 'results', 'View'] : null,
     flags.length ? [`${flags.length} flagged question${flags.length > 1 ? 's' : ''}`, 'flags', 'View'] : null,
     needBackup && !syncHealthy() ? ['New week: save a backup (one tap)', 'exportData', 'Save'] : null,
@@ -2854,7 +2855,7 @@ const sjson = v => v === undefined ? '~' : JSON.stringify(v, (k, x) => x && type
 const same = (a, b) => sjson(a) === sjson(b);
 const isObj = x => !!x && typeof x === 'object' && !Array.isArray(x);
 const APPEND = { 'points.log': x => x.id || 'h' + sjson([x.t, x.n, x.why]), results: x => x.id, assignLog: x => x.id + '@' + x.at };
-const SETS = ['order', 'week.core', 'week.bonus', 'breaks'];
+const SETS = ['order', 'week.core', 'week.bonus', 'breaks', 'syncRetired'];
 function merge3(b, l, r, path, newer) {
   if (same(l, r)) return l;
   if (APPEND[path]) return mergeAppend(b, l, r, path, newer);
@@ -2923,6 +2924,10 @@ function applyShared(m) {
   const paid = new Set(S.points.log.map(x => x.id));
   S.results.forEach(r => { if (r.rejected && paid.has('acc-' + r.id)) delete r.rejected; });
   migrateResults(S.results); // a device still on v17 may have sent results scored the old way
+  if (S.week) { // two devices' plans combined: keep it to 3 + 2 slots, no repeats
+    const core = [...new Set(S.week.core || [])], bonus = [...new Set(S.week.bonus || [])].filter(id => !core.includes(id));
+    S.week.core = core.slice(0, CONFIG.WEEK_GOAL); S.week.bonus = [...core.slice(CONFIG.WEEK_GOAL), ...bonus].slice(0, CONFIG.WEEK_BONUS);
+  }
   S.attempt = attempt; S.savedAt = savedAt;
   SYNC.applying = true; save(); SYNC.applying = false;
 }
@@ -2970,7 +2975,17 @@ const syncMsg = e => SYNC_ERR[e && e.message] || 'GitHub didn’t answer (' + ((
 const loadBase = () => { try { return JSON.parse(localStorage.getItem(SYNC_BASE_KEY) || 'null'); } catch (e) { return null; } };
 const saveBase = b => { try { localStorage.setItem(SYNC_BASE_KEY, JSON.stringify(b)); } catch (e) {} };
 function syncForgetBase() { try { localStorage.removeItem(SYNC_BASE_KEY); } catch (e) {} }
-function syncBlocked() { return !!S.attempt || ['edit', 'newLesson', 'generating', 'pin'].includes(view.name) || (typeof GEN !== 'undefined' && GEN && GEN.status === 'running') || (typeof WRITING_STEP !== 'undefined' && WRITING_STEP); }
+/* Sync waits only while something is open on screen that a merge could disturb. It used to wait
+   whenever an unfinished lesson, review or fix-up was saved (S.attempt), which could stop a device
+   from ever syncing while "Sync now" still said "Synced". */
+function syncBlockReason() {
+  if (view.name === 'play') return 'Aanya is in a lesson on this device';
+  if (['edit', 'newLesson', 'generating', 'pin'].includes(view.name)) return 'a lesson is being written or edited';
+  if (typeof GEN !== 'undefined' && GEN && GEN.status === 'running') return 'a lesson is being written';
+  if (typeof WRITING_STEP !== 'undefined' && WRITING_STEP) return 'a lesson is being written';
+  return '';
+}
+const syncBlocked = () => !!syncBlockReason();
 function syncSoon() { if (SYNC.applying || !S.settings.sync || !S.settings.sync.auto) return; clearTimeout(SYNC.timer); SYNC.timer = setTimeout(() => syncNow(), 1500); }
 function syncStamp(err) {
   const c = S.settings.sync; if (!c) return;
@@ -3010,6 +3025,7 @@ async function syncNow({ prefer } = {}) {
       txt = await gistText(other, c.token); ver = h[0].version;
     }
     syncStamp();
+    if (!c.othersAt || Date.now() - c.othersAt > 6 * 36e5) await syncFindOthers().catch(() => {});
     if (changed && !syncBlocked() && !['play', 'settings'].includes(view.name) && !(document.activeElement && /INPUT|TEXTAREA/.test(document.activeElement.tagName))) render();
     return changed;
   } catch (e) {
@@ -3020,6 +3036,20 @@ async function syncNow({ prefer } = {}) {
     if (SYNC.again && !syncBlocked()) { SYNC.again = false; syncSoon(); }
   }
 }
+// Every gist on the account that holds this app's shared copy (the token can list them, not read them).
+async function syncListCopies(token) {
+  const list = await gh('GET', '/gists?per_page=100', null, token);
+  return (Array.isArray(list) ? list : []).filter(g => g.files && g.files[SYNC_FILE]).map(g => ({ id: g.id, at: Date.parse(g.updated_at) || 0 }));
+}
+async function syncFindOthers() {
+  const c = S.settings.sync; if (!c) return;
+  const retired = new Set(S.syncRetired || []);
+  const others = (await syncListCopies(c.token)).filter(g => g.id !== c.gist && !retired.has(g.id));
+  c.others = others; c.othersAt = Date.now();
+  SYNC.applying = true; save(); SYNC.applying = false;
+}
+const syncOthers = () => { const c = S.settings.sync, r = S.syncRetired || []; return c ? (c.others || []).filter(o => o.id !== c.gist && !r.includes(o.id)) : []; };
+const copyId = id => String(id || '').slice(-6).toUpperCase();
 // ---- setup codes ----
 const setupCode = c => 'TUTOR1-' + b64(new TextEncoder().encode(JSON.stringify({ g: c.gist, t: c.token, k: c.key })));
 function readCode(txt) {
@@ -3033,6 +3063,11 @@ A.syncStart = async (_, el) => {
   if (!token) { toast('Paste the GitHub token first.'); return; }
   el.disabled = true; el.textContent = 'Turning on…';
   try {
+    const existing = await syncListCopies(token);
+    if (existing.length) {
+      const last = existing.sort((a, b) => b.at - a.at)[0];
+      if (!confirm(`You already have a shared copy on GitHub (${copyId(last.id)}, last changed ${fmtDate(last.at)}). Another device is probably using it.\n\nDon’t make a second one: on that device, open Settings → Use on more devices → Show setup code, and paste it below under “Already on another device?”.\n\nTap Cancel to do that (recommended). Tap OK only to start a separate new copy.`)) { el.disabled = false; el.textContent = 'Turn on sync'; return; }
+    }
     const key = b64(crypto.getRandomValues(new Uint8Array(32)));
     ledgerFix();
     const data = syncData(S);
@@ -3042,10 +3077,14 @@ A.syncStart = async (_, el) => {
     SYNC.showCode = true; FORMS.SY.token = ''; save(); toast('Sync is on ✓'); render(); syncPoll();
   } catch (e) { alert('Couldn’t turn on sync: ' + syncMsg(e) + '.'); el.disabled = false; el.textContent = 'Turn on sync'; }
 };
+const SNAP_KEY = CONFIG.STORAGE_KEY + '.beforejoin';
 async function syncJoin(code) {
   const o = readCode(code), g = await gh('GET', '/gists/' + o.g, null, o.t), txt = await gistText(g, o.t);
   if (!txt) throw new Error('notours');
   const remote = await unseal(txt, o.k);
+  const old = S.settings.sync;
+  try { localStorage.setItem(SNAP_KEY, JSON.stringify({ at: Date.now(), S: Object.assign({}, S, { attempt: null }) })); } catch (e) {}
+  if (old && old.gist !== o.g) S.syncRetired = [...new Set([...(S.syncRetired || []), old.gist])]; // its contents are combined in below
   S.settings.sync = { gist: o.g, token: o.t, key: o.k, device: uid(), auto: true, last: 0, err: '' };
   syncForgetBase(); save(); // no shared history yet: anything already on this device is combined, never dropped
   await syncNow({ prefer: 'r' });
@@ -3056,13 +3095,34 @@ async function syncJoin(code) {
 A.syncJoin = async (_, el) => {
   const code = str($('#syncCode') && $('#syncCode').value);
   if (!code) { toast('Paste the setup code first.'); return; }
-  const has = S.order.length + S.results.length;
-  if (has && !confirm(`This device already has ${S.order.length} lessons and ${S.results.length} results. They’ll be combined with the shared copy. Go ahead?`)) return;
+  const has = S.order.length + S.results.length, prev = S.settings.sync;
+  if (prev) { try { if (readCode(code).g === prev.gist) { toast('This device already uses that shared copy.'); return; } } catch (e) {} }
+  if (has && !confirm(`This device has ${S.order.length} lessons and ${S.results.length} finished lessons. Nothing here is deleted: it is combined with the shared copy, and your other devices get it too. Go ahead?`)) return;
   el.disabled = true; el.textContent = 'Joining…';
-  try { await syncJoin(code); toast('Joined ✓ Everything from your other device is here.'); role = null; go('gate'); }
-  catch (e) { S.settings.sync = null; syncForgetBase(); save(); alert('Couldn’t join: ' + (SYNC_ERR[e.message] ? syncMsg(e) : e.message) + '.'); el.disabled = false; el.textContent = 'Join'; }
+  const before = { lessons: S.order.length, results: S.results.length, bal: S.points.balance };
+  try {
+    await syncJoin(code);
+    const msg = `Joined ✓ This device now has ${S.order.length} lessons (was ${before.lessons}), ${S.results.length} finished lessons (was ${before.results}), balance ${S.points.balance} points (was ${before.bal}).`;
+    if (before.lessons + before.results) alert(msg + '\n\nIf the balance looks wrong, Settings → Use on more devices → Undo the last join puts this device back as it was.'); else toast(msg);
+    if (prev) { SYNC.showJoin = false; render(); } else { role = null; go('gate'); }
+  }
+  catch (e) { S.settings.sync = prev || null; syncForgetBase(); save(); alert('Couldn’t join: ' + (SYNC_ERR[e.message] ? syncMsg(e) : e.message) + '.'); el.disabled = false; el.textContent = 'Join'; }
 };
-A.syncNowBtn = async (_, el) => { el.disabled = true; el.textContent = 'Syncing…'; await syncNow(); toast(S.settings.sync.err ? 'Couldn’t sync: ' + S.settings.sync.err : 'Synced ✓'); render(); };
+A.syncNowBtn = async (_, el) => {
+  const why = syncBlockReason(); if (why) { toast('Can’t sync right now: ' + why + '.'); return; }
+  el.disabled = true; el.textContent = 'Syncing…';
+  const before = S.settings.sync.last || 0;
+  await syncFindOthers().catch(() => {});
+  await syncNow();
+  const c = S.settings.sync;
+  toast(c.err ? 'Couldn’t sync: ' + c.err : c.last > before ? 'Synced ✓' : 'Didn’t sync. Try again in a moment.'); render();
+};
+A.syncShowJoin = () => { SYNC.showJoin = !SYNC.showJoin; render(); };
+A.syncUndoJoin = () => {
+  let snap; try { snap = JSON.parse(localStorage.getItem(SNAP_KEY) || 'null'); } catch (e) {}
+  if (!snap || !confirm(`Put this device back exactly as it was on ${fmtDate(snap.at)}, before the last join? This device stops syncing; other devices keep what they have.`)) return;
+  S = Object.assign(DEFAULT_STATE(), snap.S); S.settings.sync = null; syncForgetBase(); localStorage.removeItem(SNAP_KEY); save(); toast('Put back ✓'); render();
+};
 A.syncShowCode = () => { SYNC.showCode = !SYNC.showCode; render(); };
 A.syncCopy = async () => { try { await navigator.clipboard.writeText(setupCode(S.settings.sync)); toast('Copied. Paste it on the other device.'); } catch (e) { $('#syncOut').select(); toast('Select and copy the code.'); } };
 A.syncStop = () => {
@@ -3082,13 +3142,23 @@ function syncCard() {
 <p style="margin-top:18px"><b>Already on another device?</b> Paste its setup code (Settings → Use on more devices → Show setup code).</p>
 <textarea id="syncCode" rows="2" placeholder="TUTOR1-..." autocomplete="off"></textarea>
 <div class="row" style="margin-top:10px"><button class="ghost" data-a="syncJoin">Join</button></div></div>`;
+  const why = syncBlockReason(), others = syncOthers();
+  let snap = null; try { snap = localStorage.getItem(SNAP_KEY) ? 1 : null; } catch (e) {}
   return `<div class="card"><h2>📱 Use on more devices</h2>
+${others.length ? `<div class="banner" style="border-color:var(--danger)"><p>⚠️ <b>Your devices may not be sharing.</b> Your GitHub has ${others.length + 1} shared copies, so another device is probably using a different one (${others.map(o => esc(copyId(o.id))).join(', ')}; this device uses ${esc(copyId(c.gist))}).</p><p>To fix it: on <b>the other device</b>, open Settings → Use on more devices → Show setup code → Copy. On <b>this</b> device, tap “Join a different shared copy” below and paste it. Nothing is deleted: both devices’ lessons, results and points are combined.</p></div>` : ''}
 <p>${c.err ? `<span style="color:var(--danger)">⚠️ Couldn’t sync: ${esc(c.err)}.</span>` : `✓ Sync is on. ${c.last ? 'Last synced ' + ago(c.last) + '.' : ''}`}</p>
+${why ? `<p class="muted">Waiting: ${esc(why)}.</p>` : ''}
+<table class="muted" style="font-size:15px;margin:4px 0 12px"><tr><td>Shared copy</td><td style="padding-left:14px"><b>${esc(copyId(c.gist))}</b> <small>(must be the same on every device)</small></td></tr>
+<tr><td>This copy of the app</td><td style="padding-left:14px">${isStandalone() ? 'Home Screen icon' : 'Browser tab'}</td></tr>
+<tr><td>On this device</td><td style="padding-left:14px">${S.order.length} lessons · ${S.results.length} finished · ${S.points.balance} points</td></tr></table>
 <div class="row"><button class="ghost" data-a="syncNowBtn">Sync now</button><button class="ghost" data-a="syncShowCode">${SYNC.showCode ? 'Hide' : 'Show'} setup code</button></div>
 ${SYNC.showCode ? `<p class="muted" style="margin-top:14px">On the other device, open the app, tap <b>“Already set up on another device? Join it”</b> on the first screen (or Settings → Use on more devices), and paste this. On the iPad, do it <b>inside the Home Screen icon</b>: it keeps its own copy, separate from Safari.</p>
 <textarea id="syncOut" rows="3" readonly>${esc(setupCode(c))}</textarea>
 <div class="row" style="margin-top:10px"><button class="ghost" data-a="syncCopy">Copy code</button></div>
 <p class="muted"><small>🔐 Treat this code like a password: it opens the shared copy. If a device is lost, delete the token at github.com → Settings → Developer settings → Personal access tokens, then turn sync on again here.</small></p>` : ''}
+<button class="link" data-a="syncShowJoin">Join a different shared copy</button>
+${SYNC.showJoin ? `<p class="muted">Paste the setup code from the other device. This device’s lessons, results and points are combined into that copy, never deleted.</p><textarea id="syncCode" rows="2" placeholder="TUTOR1-..." autocomplete="off"></textarea><div class="row" style="margin-top:10px"><button class="ghost" data-a="syncJoin">Join and combine</button></div>` : ''}
+${snap ? `<button class="link" data-a="syncUndoJoin">Undo the last join</button>` : ''}
 <button class="link" data-a="syncStop">Stop syncing on this device</button></div>`;
 }
 VIEWS.join = () => `

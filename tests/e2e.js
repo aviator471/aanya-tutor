@@ -1022,6 +1022,7 @@ class FakeGist {
       const reply = (status, body) => route.fulfill({ status, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(body) });
       if (req.headers().authorization !== 'Bearer ' + this.token) return reply(401, { message: 'Bad credentials' });
       const parts = url.pathname.split('/').filter(Boolean); // gists, id, ver
+      if (m === 'GET' && parts.length === 1) return reply(200, Object.keys(this.gists).map(id => ({ id, description: 'x', updated_at: new Date().toISOString(), files: { 'tutor-sync.txt': { filename: 'tutor-sync.txt' } } })));
       if (m === 'POST' && parts.length === 1) {
         const id = 'gist' + (++this.n), content = JSON.parse(req.postData()).files['tutor-sync.txt'].content;
         this.gists[id] = { versions: [{ version: id + '-v1', content }] };
@@ -1256,6 +1257,101 @@ test('sync: changes go up by themselves a moment after saving', async () => {
   for (let i = 0; i < 40 && gist.gists.gist1.versions.length === n; i++) await page.waitForTimeout(100);
   ok(gist.gists.gist1.versions.length > n, 'saved to the shared copy without tapping anything');
   return page;
+});
+
+test('sync: a lesson or fix-up left open on the iPad no longer stops it from syncing; Sync now tells the truth', async () => {
+  const gist = new FakeGist();
+  const { page: laptop, ids } = await freshWithLessons(['Topic Math', 'Topic Two']);
+  await laptop.evaluate(ids => ids.forEach(id => addToWeek(id, true)), ids);
+  const code = await turnOnSync(laptop, gist);
+  let ipad;
+  try {
+    ipad = await joinSync(gist, code);
+    await kidLogin(ipad);
+    const r = await kidDoes(ipad, ids[0], { minutes: 12 });
+    // She starts the next one and leaves with ✕: the unfinished lesson stays saved on the iPad.
+    await ipad.evaluate(() => go('kidHome'));
+    await act(ipad, 'kidStart', ids[1]);
+    await play(ipad, { minutes: 2, stopAt: 'numeric' });
+    await act(ipad, 'exitPlay');
+    ok(await ipad.evaluate(() => !!S.attempt && view.name === 'kidHome'), 'unfinished lesson kept');
+    // Mom taps Sync now on the iPad.
+    await momLogin(ipad); await ipad.evaluate(() => go('settings'));
+    await act(ipad, 'syncNowBtn'); await ipad.waitForFunction(() => !SYNC.busy);
+    ok((await ipad.locator('#toast').textContent()).includes('Synced ✓'), 'iPad really synced');
+    await sync(laptop);
+    eq(await laptop.evaluate(() => S.results.map(x => x.id)), [r.id], 'laptop sees the finished lesson');
+    eq(await ipad.evaluate(() => S.attempt && S.attempt.lessonId), ids[1], 'her unfinished lesson is untouched');
+    ok((await text(ipad)).includes(await laptop.evaluate(() => copyId(S.settings.sync.gist))), 'Settings shows the shared copy id');
+    ok((await text(ipad)).includes('2 lessons · 1 finished'), 'Settings shows what is on this device');
+    // While she is answering, Sync now says why it waits instead of "Synced".
+    await kidLogin(ipad); await act(ipad, 'resumePlay');
+    await ipad.waitForFunction(() => view.name === 'play');
+    const why = await ipad.evaluate(() => syncBlockReason());
+    eq(why, 'Aanya is in a lesson on this device', 'reason while playing');
+  } finally { await closeOther(ipad); }
+  return laptop;
+});
+
+test('sync: a second device can’t accidentally start its own shared copy', async () => {
+  const gist = new FakeGist();
+  const { page: laptop } = await freshWithLessons(['Topic Math']);
+  await turnOnSync(laptop, gist);
+  const other = await open(); await gist.attach(other); await momSetup(other);
+  await other.evaluate(() => go('settings')); await other.fill('[data-bind="SY:token"]', GOOD_TOKEN);
+  const msgs = []; other.removeAllListeners('dialog'); other.on('dialog', d => { msgs.push(d.message()); d.dismiss(); });
+  await act(other, 'syncStart'); await other.waitForTimeout(300);
+  ok(msgs.some(m => m.includes('You already have a shared copy')), 'warned: ' + msgs.join(' | '));
+  ok(!(await other.evaluate(() => S.settings.sync)), 'not turned on');
+  eq(Object.keys(gist.gists).length, 1, 'no second copy made');
+  await closeOther(other);
+  return laptop;
+});
+
+test('sync: devices on two different shared copies are found and combined, nothing lost (Andrew’s case)', async () => {
+  const gist = new FakeGist();
+  const { page: laptop, ids: lids } = await freshWithLessons(['Topic Math']);
+  await laptop.evaluate(id => addToWeek(id, true), lids[0]);
+  const lcode = await turnOnSync(laptop, gist);
+  // The iPad was set up on its own and made its own shared copy (OK on the warning).
+  const { page: ipad, ids } = await freshWithLessons(['Topic Science', 'Topic Reading']);
+  try {
+    await ipad.evaluate(ids => ids.forEach(id => addToWeek(id, true)), ids);
+    await kidLogin(ipad);
+    const a = await kidDoes(ipad, ids[0], { minutes: 12 });
+    const b = await kidDoes(ipad, ids[1], { minutes: 12 });
+    await momLogin(ipad); await ipad.evaluate(() => go('results')); await act(ipad, 'acceptResult', a.id);
+    const bal = await ipad.evaluate(() => S.points.balance);
+    ok(bal > 0, 'she has points on the iPad');
+    await turnOnSync(ipad, gist);
+    eq(Object.keys(gist.gists).length, 2, 'two copies, like Andrew');
+    await sync(ipad); await sync(laptop);
+    eq(await laptop.evaluate(() => S.order.length), 1, 'laptop still only sees Math (the bug he saw)');
+    // Both devices now say so.
+    await laptop.evaluate(() => syncFindOthers()); await ipad.evaluate(() => syncFindOthers());
+    await laptop.evaluate(() => go('momHome'));
+    ok((await text(laptop)).includes('different shared copies'), 'laptop home warns');
+    await ipad.evaluate(() => go('settings'));
+    ok((await text(ipad)).includes('may not be sharing'), 'iPad settings explains');
+    // Fix: on the iPad, join the laptop's copy.
+    await act(ipad, 'syncShowJoin');
+    await ipad.fill('#syncCode', lcode);
+    await act(ipad, 'syncJoin');
+    await ipad.waitForFunction(() => !SYNC.showJoin);
+    await sync(laptop);
+    for (const [name, p] of [['laptop', laptop], ['iPad', ipad]]) {
+      const st = await S(p);
+      eq(st.order.length, 3, name + ': all three lessons');
+      eq(st.results.map(r => r.id).sort(), [a.id, b.id].sort(), name + ': both finished lessons');
+      eq(st.points.balance, bal, name + ': balance unchanged, not doubled');
+      eq(await p.evaluate(() => pendingPts()), b.points, name + ': the other one still waits for Mom');
+      ok(st.week.core.length <= 3 && st.week.bonus.length <= 2, name + ': week stays 3 + 2');
+      eq(await p.evaluate(() => syncOthers().length), 0, name + ': warning gone');
+    }
+    eq(await ipad.evaluate(() => S.settings.sync.gist), await laptop.evaluate(() => S.settings.sync.gist), 'same copy now');
+    ok((await text(ipad)).includes('Undo the last join'), 'undo offered');
+  } finally { await closeOther(ipad); }
+  return laptop;
 });
 
 test('sync: merge rules (append-only results and ledger, deletions, lists)', async () => {
