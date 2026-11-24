@@ -54,8 +54,18 @@ const TOPUP = [
   { type: 'mcq', prompt: 'What is the bottom number of a fraction called?', choices: ['denominator', 'numerator'], answer: 'denominator', explanationWrong: 'The bottom number says how many parts.', explainRef: 1 },
   { type: 'numeric', prompt: 'What is 9 - 3?', answer: '6', expr: '9-3', explanationWrong: 'Count back from 9.', explainRef: 0 },
 ];
+// After the 4 fixed ones, the fake writes new sums (each one different), like a real bank top-up.
+function topup(page, n) {
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const k = page.topCount = (page.topCount || 0) + 1;
+    out.push(k <= TOPUP.length ? TOPUP[k - 1] : { type: 'numeric', tier: 1 + k % 3, prompt: `What is ${k} + ${k + 100}?`, answer: String(2 * k + 100), expr: `${k}+${k + 100}`, explanationWrong: 'Add the ones, then the tens.', explainRef: k % 2 });
+  }
+  return out;
+}
 // The fake second model "solves" a question by looking it up in the fixture above.
 function solve(q) {
+  const sum = /^What is (\d+) \+ (\d+)\?$/.exec(q.question); if (sum && +sum[2] > 100) return String(+sum[1] + +sum[2]);
   const L = lessonJSON('x'), src = [...L.practice, ...L.check, ...TOPUP].find(x => x.prompt === q.question);
   if (!src) return null;
   if (src.type === 'match') return src.pairs.map(p => p.b);
@@ -99,7 +109,7 @@ async function open({ time = WED, state, claudeCalls, init } = {}) {
       page.topUps = (page.topUps || []).concat(all);
       if (page.topUpFails) return route.fulfill({ status: 500, contentType: 'application/json', body: '{"error":{"message":"overloaded"}}' });
       const n = +(all.match(/Write exactly (\d+)/) || [0, 3])[1];
-      return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(JSON.stringify({ check: TOPUP.slice(0, n) })) });
+      return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sse(JSON.stringify({ check: topup(page, n) })) });
     }
     if (page.dropWhileHidden && /sonnet/.test(body.model)) { // the iPad locks while the lesson is being written
       await page.evaluate(() => { Object.defineProperty(document, 'hidden', { configurable: true, get: () => true }); document.dispatchEvent(new Event('visibilitychange')); });
@@ -190,7 +200,7 @@ async function play(page, { minutes = 15, wrong = [], explainDifferently = false
     const st = await page.evaluate(() => {
       if (view.name !== 'play' || !S.attempt) return { done: true, view: view.name };
       const a = S.attempt, s = a.steps[a.si], q = curQ();
-      return { k: s && s.k, interject: a.interject, fb: a.sub.fb ? { correct: a.sub.fb.correct } : null, phase: a.sub.phase || 'work', shown: a.sub.shown || 0, ex: s && s.k === 'example' ? curLesson().examples[s.i].steps.length : 0,
+      return { k: s && s.k, interject: a.interject, fb: a.sub.fb ? { correct: a.sub.fb.correct, hidden: !!a.sub.fb.hidden } : null, phase: a.sub.phase || 'work', shown: a.sub.shown || 0, ex: s && s.k === 'example' ? curLesson().examples[s.i].steps.length : 0,
         q: q && { type: q.type, prompt: q.prompt, choices: q.choices, answer: q.answer, pairs: q.pairs, items: q.items, n: q.n, d: q.d, min: q.min, max: q.max, target: q.target }, shuf: a.sub.shuf, seen: a.sub.seen };
     });
     if (st.done) return st.view;
@@ -199,13 +209,14 @@ async function play(page, { minutes = 15, wrong = [], explainDifferently = false
     if (st.interject != null && st.k === 'practice' && !st.fb) { await act(page, 'endInterject'); continue; }
     if (st.k === 'explain') { if (explainDifferently) { explainDifferently = false; await act(page, 'explainDiff', '0'); await page.waitForFunction(() => !EXPLAINING); } await act(page, 'next'); continue; }
     if (st.k === 'passage' || st.k === 'fixintro') { await act(page, 'next'); continue; }
+    if (st.k === 'testintro') { if (stopAt === 'testintro') return 'stopped'; await act(page, 'testGo'); continue; }
     if (st.k === 'example') { if (st.shown < st.ex) await act(page, 'revealStep'); else await act(page, 'next'); continue; }
     if (st.k === 'pencil') {
       if (st.phase === 'work') { await tick(page, 46e3); await page.waitForFunction(() => !document.querySelector('#doneBtn').disabled, null, { timeout: 5000 }); await act(page, 'pencilDone'); }
       else await act(page, 'pencilNext');
       continue;
     }
-    if (st.fb) { if (!st.fb.correct && cause) await act(page, 'setCause', cause); await act(page, 'next'); continue; }
+    if (st.fb) { if (!st.fb.correct && !st.fb.hidden && cause) await act(page, 'setCause', cause); await act(page, 'next'); continue; }
     if (st.k === 'warm' && !st.seen && (await page.locator('[data-a="seenReteach"]').count())) { await act(page, 'seenReteach'); continue; }
     await answer(page, st.q, st.shuf, wrong.includes(st.q.prompt));
   }
@@ -274,14 +285,15 @@ test('Mom makes a lesson with Claude (faked) and it lands in this week', async (
   await momSetup(page);
   const id = await makeLesson(page, 'Topic Fractions');
   ok((await text(page)).includes('Topic Fractions'), 'summary shows the lesson');
-  eq(page.calls.filter(m => /sonnet/.test(m)).length, 2, 'one authoring call + one call to top up the 3-question test');
-  eq((page.topUps || []).length, 1, 'the test was topped up once');
-  ok(page.topUps[0].includes('Write exactly 3 new test questions'), 'asked for the 3 missing test questions');
+  eq(page.calls.filter(m => /sonnet/.test(m)).length, 3, 'one authoring call + two calls (20 at most each) to fill the 40-question test bank');
+  eq((page.topUps || []).length, 2, 'the bank was written in two parts');
+  ok(page.topUps[0].includes('Write exactly 20 new test questions') && page.topUps[1].includes('Write exactly 17 new test questions'), 'asked for the 37 missing bank questions');
   eq(page.keyChecks, 1, 'answer keys checked once by the second model');
   ok((await text(page)).includes('Answer keys double-checked'), 'Mom sees the check passed');
   const L = await page.evaluate(id => S.lessons[id], id);
   eq(L.practice.length, 8, 'all 8 practice questions kept');
-  eq(L.check.length, 6, 'final test topped up to the full 6 questions');
+  eq(L.check.length, 40, 'test bank filled to 40 questions');
+  ok((await text(page)).includes('15-question final test from a bank of 40'), 'Mom sees the test length and the bank');
   eq(L.meta.short, false, 'a normal lesson, not a catch-up one');
   await page.evaluate(() => go('lessons'));
   await act(page, 'assignLesson', id);
@@ -299,8 +311,8 @@ test('Aanya plays a whole lesson, every question type, all right', async () => {
   eq([r.checkRight, r.checkTotal], [3, 3], 'check score');
   eq(r.practiceRight, r.practiceTotal, 'all practice right');
   ok(r.minutes >= 17 && r.minutes <= 24, 'minutes from the clock: ' + r.minutes);
-  const pts = 100 + 3 * 5 + 50;
-  eq(r.points, pts, 'points = lesson + right answers on the final test + perfect test (practice and paper pay nothing)');
+  const pts = 100 + 40 + 50;
+  eq(r.points, pts, 'points = lesson + final test (40 at 100%, whatever its length) + perfect test (practice and paper pay nothing)');
   eq(await page.evaluate(() => [S.points.balance, pendingPts()]), [0, pts], 'held until Mom accepts');
   const t = await text(page);
   ok(t.includes('Lesson complete') && t.includes('2 more to fill your week'), 'reward screen with week progress');
@@ -314,7 +326,7 @@ test('wrong answers: feedback, cause tag, mistakes notebook, review flow', async
   const r = await kidDoes(page, ids[0], { minutes: 15, wrong: ['Which shows three quarters?', 'What is 3 + 4?'], cause: 'slip' });
   eq([r.checkRight, r.checkTotal], [2, 3], 'one check wrong');
   eq(r.mastery, 67, 'mastery');
-  eq(r.causes.slip, 2, 'causes recorded');
+  eq(r.causes.slip, 1, 'cause recorded on the practice miss (during the test she isn’t told she was wrong, so there is nothing to tag)');
   const nb = await page.evaluate(() => S.notebook.map(n => n.q.prompt).sort());
   eq(nb, ['Which shows three quarters?'], 'notebook keeps the test miss only (practice misses are handled in the lesson)');
   ok((await text(page)).includes('Fix my test mistakes (2 quick questions)'), 'fix-up button on reward');
@@ -1554,8 +1566,8 @@ test('final test length: a normal lesson gets the full test, only catch-up lesso
   await page.waitForFunction(n => S.order.length > n && view.name === 'summary', before, { timeout: 10000 });
   const a = await page.evaluate(() => S.lessons[S.order[0]]);
   ok(!page.prompts.some(p => p.includes('SHORT CATCH-UP LESSON')), 'a suggestion is not written as a short catch-up lesson');
-  eq([a.meta.short, a.check.length], [false, 6], 'suggested lesson: full 6-question final test');
-  ok((await text(page)).includes('6-question final test') && !(await text(page)).includes('The final test has only'), 'Mom sees a full test');
+  eq([a.meta.short, a.check.length], [false, 40], 'suggested lesson: full 40-question bank');
+  ok((await text(page)).includes('15-question final test') && !(await text(page)).includes('The final test has only'), 'Mom sees a full test');
   // 2. A catch-up plan step is a SHORT lesson and keeps its 3-question test (no top-up)
   await page.evaluate(() => { S.plan = { id: 'p1', at: Date.now(), scope: 'all', steps: [{ id: 'st1', subject: 'science', title: 'Fix-it: Topic Plants', focus: 'plants', codes: [], gap: false, pct: 40, notes: '', lessonId: null, existing: false, est: 18 }] }; save(); go('momHome'); });
   ok((await text(page)).includes('Catch-up plan'), 'catch-up plan on Home');
@@ -1564,13 +1576,15 @@ test('final test length: a normal lesson gets the full test, only catch-up lesso
   await page.waitForFunction(() => S.plan.steps[0].lessonId && view.name === 'summary', null, { timeout: 10000 });
   const b = await page.evaluate(() => S.lessons[S.plan.steps[0].lessonId]);
   ok(page.prompts.some(p => p.includes('SHORT CATCH-UP LESSON')), 'catch-up step asks for a short lesson');
-  eq([b.meta.short, b.check.length, page.topUps.length], [true, 3, 0], 'catch-up lesson: 3-question test, no top-up');
+  eq([b.meta.short, b.check.length, page.topUps.length], [true, 12, 1], 'catch-up lesson: a 12-question bank (one small top-up)');
+  ok((await text(page)).includes('5-question final test from a bank of 12'), 'catch-up test is 5 questions');
   ok((await text(page)).includes('short catch-up lesson') && !(await text(page)).includes('The final test has only'), 'Mom sees it is a catch-up lesson');
-  // 3. Playing the normal lesson asks all 6 test questions
+  // 3. Playing the normal lesson asks 15 test questions from the bank
   await page.evaluate(id => addToWeek(id, true), a.id);
   await kidLogin(page);
-  const r = await kidDoes(page, a.id, { minutes: 15 });
-  eq([r.checkRight, r.checkTotal], [6, 6], 'she answered all 6 final-test questions');
+  const r = await kidDoes(page, a.id, { minutes: 25 });
+  eq([r.checkRight, r.checkTotal], [15, 15], 'she answered 15 final-test questions');
+  eq(new Set(r.testIds).size, 15, 'the 15 she had are recorded, so a retest can avoid them');
   return page;
 });
 
@@ -1585,10 +1599,10 @@ test('final test length: an older lesson with a short test can be topped up by M
   eq(await page.evaluate(id => S.lessons[id].check.length, ids[0]), 3, 'a failed top-up changes nothing');
   page.topUpFails = false;
   await act(page, 'topUpChecks', ids[0]);
-  await page.waitForFunction(id => S.lessons[id].check.length === 6, ids[0]);
-  ok(!(await text(page)).includes('The final test has only'), 'warning gone');
+  await page.waitForFunction(id => S.lessons[id].check.length === 40, ids[0]);
+  ok(!(await text(page)).includes('The final test has only') && !(await text(page)).includes('Build the test bank'), 'warning gone');
   const L = await page.evaluate(id => S.lessons[id], ids[0]);
-  eq(new Set(L.check.map(q => q.id)).size, 6, 'new questions have their own ids');
+  eq(new Set(L.check.map(q => q.id)).size, 40, 'new questions have their own ids');
   ok(L.check.every(q => q.type === 'mcq' || q.type === 'numeric'), 'only test-safe question types');
   return page;
 });
@@ -1600,6 +1614,214 @@ test('final test length: when the top-up fails while writing, the lesson is stil
   const id = await makeLesson(page, 'Topic Fails');
   eq(await page.evaluate(id => S.lessons[id].check.length, id), 3, 'lesson kept with its 3 questions');
   ok((await text(page)).includes('The final test has only 3 questions'), 'Mom sees the short test and the fix button');
+  return page;
+});
+
+/* =========================================================
+   v22 (Andrew, 2026-11-23): 15-question test from a 40-question bank, its own sitting,
+   answers hidden until the end, points flat, retests only Mom can give
+   ========================================================= */
+async function bankLesson(page, topic = 'Topic Bank') {
+  const id = await makeLesson(page, topic);
+  await page.evaluate(id => addToWeek(id, true), id);
+  return id;
+}
+const sumPrompts = (page, ids) => page.evaluate(ids => ids.map(id => S.lessons[S.results[0].lessonId].check.find(q => q.id === id)).filter(Boolean).map(q => q.prompt), ids);
+
+test('test: its own part after the lesson, she can take a break, and reviews can’t wipe it out', async () => {
+  const page = await open(); await momSetup(page);
+  const id = await bankLesson(page);
+  await kidLogin(page);
+  await act(page, 'kidStart', id);
+  eq(await play(page, { minutes: 15, stopAt: 'testintro' }), 'stopped', 'lesson part ends at the test intro');
+  let t = await text(page);
+  ok(t.includes('Lesson part done') && t.includes('Now your test: 15 questions') && t.includes('Take a break first'), 'intro offers now or later');
+  await act(page, 'exitPlay');
+  await page.evaluate(() => { S.review.push({ id: 'rv1', lessonId: 'zz', q: { id: 'q', type: 'mcq', prompt: 'x?', choices: ['a', 'b'], answer: 'a' }, box: 1, due: todayStr(), cause: '' }); save(); render(); });
+  await act(page, 'startReview');
+  eq(await page.evaluate(() => S.attempt.mode), 'lesson', 'a review doesn’t replace the paused lesson');
+  ok((await page.locator('#toast').textContent()).includes('Finish your lesson test first'), 'she is told why');
+  await tick(page, 3 * 60 * MIN);
+  await act(page, 'resumePlay');
+  const v = await play(page, { minutes: 12 });
+  eq(v, 'reward', 'test finished later');
+  const r = await S(page, 'S.results[0]');
+  eq([r.checkRight, r.checkTotal, r.kind], [15, 15, 'lesson'], 'one result for lesson + test');
+  ok(r.testMin >= 1, 'test time recorded for Mom');
+  return page;
+});
+
+test('test: no right/wrong while she answers; every answer shown at the end', async () => {
+  const page = await open(); await momSetup(page);
+  const id = await bankLesson(page);
+  await kidLogin(page);
+  await act(page, 'kidStart', id);
+  await play(page, { minutes: 15, stopAt: 'testintro' });
+  await act(page, 'testGo');
+  const q = await page.evaluate(() => curQ());
+  if (q.type === 'mcq') await act(page, 'answerMcq', String(q.choices.indexOf(q.choices.find(c => c !== q.answer))));
+  else { for (const ch of '999') await act(page, 'key', ch); await act(page, 'key', 'ok'); }
+  const t = await text(page);
+  ok(t.includes('Answer saved') && !t.includes('Not quite') && !t.includes('Answer: ' + q.answer), 'no right/wrong, no answer shown');
+  eq(await page.locator('.choice.right, .choice.wrong, .typed.right, .typed.wrong').count(), 0, 'no right/wrong colours');
+  ok((await text(page)).includes('Test · 1 of 15'), 'counts the test questions');
+  await act(page, 'next');
+  await play(page, { minutes: 10 });
+  const end = await text(page);
+  ok(end.includes('Your test answers') && end.includes('14 of 15 right') && end.includes(q.prompt), 'all answers shown at the end, the wrong one with its answer');
+  const r = await S(page, 'S.results[0]');
+  eq(r.points, Math.round(50 + 50 * 93 / 100) + Math.round(40 * 14 / 15), 'points: 50–100 by score + 40 × score, no perfect bonus');
+  return page;
+});
+
+test('points stay flat with 15 questions: a perfect lesson still pays 190', async () => {
+  const page = await open(); await momSetup(page);
+  const id = await bankLesson(page);
+  await kidLogin(page);
+  const r = await kidDoes(page, id, { minutes: 25 });
+  eq([r.checkTotal, r.points], [15, 190], '15 questions, 190 points (100 + 40 + 50)');
+  eq(r.breakdown, [['Lesson complete (score 100%)', 100], ['Right on the final test', 40], ['Perfect final test!', 50]], 'breakdown');
+  return page;
+});
+
+test('retest: Mom assigns it, the first try isn’t paid, new questions, right away, only the accepted test pays', async () => {
+  const page = await open(); await momSetup(page);
+  const id = await bankLesson(page);
+  await kidLogin(page);
+  ok(!(await text(page)).includes('Retest'), 'no retest on her screen unless Mom gives one');
+  await act(page, 'kidStart', id);
+  await play(page, { minutes: 15, stopAt: 'testintro' });
+  const firstIds = await page.evaluate(() => S.attempt.steps.filter(s => s.k === 'check').map(s => s.id));
+  const wrong = await page.evaluate(ids => ids.slice(0, 8).map(i => S.lessons[S.attempt.lessonId].check.find(q => q.id === i).prompt), firstIds);
+  await act(page, 'testGo');
+  await play(page, { minutes: 10, wrong });
+  const r1 = await S(page, 'S.results[0]');
+  eq([r1.checkRight, r1.checkTotal], [7, 15], 'first test 7 of 15');
+  ok(r1.points > 0 && r1.pending, 'points waiting for Mom');
+  ok(!(await text(page)).match(/Retest/), 'still no retest button for Aanya');
+  // Mom reviews and asks for a retest instead of accepting
+  await momLogin(page);
+  await page.evaluate(() => go('results')); await act(page, 'openResult', r1.id);
+  ok((await text(page)).includes('Retest with new questions') && (await text(page)).includes('2 retests left'), 'Retest next to Accept');
+  await act(page, 'assignRetest', r1.id);
+  await page.waitForFunction(() => Object.keys(S.retests).length === 1);
+  let st = await S(page);
+  const o = st.results.find(x => x.id === r1.id);
+  eq([o.retested, o.pending, o.paid, st.points.balance], [true, false, false, 0], 'first try cancelled, nothing paid');
+  eq(await page.evaluate(() => pendingPts()), 0, 'nothing waiting');
+  ok((await text(page)).includes('Retest given') && (await text(page)).includes('Retest assigned'), 'Mom sees it');
+  eq(page.topUps.length, 2, 'no new questions needed: the bank had 25 she hadn’t seen');
+  // Aanya: on her home screen at once, same day, same week
+  await kidLogin(page);
+  ok((await text(page)).includes('Retest: Topic Bank') && (await text(page)).includes('Your points for this lesson come with it'), 'retest card');
+  await act(page, 'kidRetest', id);
+  const reIds = await page.evaluate(() => S.attempt.steps.filter(s => s.k === 'check').map(s => s.id));
+  eq(reIds.length, 15, '15 questions');
+  eq(reIds.filter(x => firstIds.includes(x)).length, 0, 'none of them from her first test');
+  ok((await text(page)).includes('Show what you know now'), 'retest intro');
+  const v = await play(page, { minutes: 12 });
+  eq(v, 'reward', 'retest done');
+  const r2 = await S(page, 'S.results[0]');
+  eq([r2.kind, r2.root, r2.checkRight, r2.checkTotal], ['retest', r1.id, 15, 15], 'retest result');
+  eq(r2.points, 190, 'pays like the lesson at its new score (100 + 40 + 50)');
+  ok((await text(page)).includes('Retest complete'), 'retest reward screen');
+  st = await S(page);
+  eq(Object.keys(st.retests).length, 0, 'retest card gone');
+  eq(await page.evaluate(() => weekList(1)[0].count), 1, 'a retest doesn’t fill another weekly slot');
+  eq(await page.evaluate(() => subjStats('math').mastery), 100, 'subject score uses the retest, not the replaced try');
+  eq(await page.evaluate(id => lessonInfo(S.lessons[id]).group, id), 'done', 'lesson no longer in Redo');
+  await momLogin(page);
+  await page.evaluate(() => go('results'));
+  ok((await text(page)).includes('🔁 Retest · Topic Bank') && (await text(page)).includes('190 points are waiting'), 'retest waits for Accept');
+  await act(page, 'acceptAll');
+  eq(await S(page, 'S.points.balance'), 190, 'only the accepted test paid');
+  return page;
+});
+
+test('retest: if the bank is used up, new questions are written first; at most 2 retests', async () => {
+  const { page, ids } = await freshWithLessons(['Topic Small']);
+  await page.evaluate(id => addToWeek(id, true), ids[0]);
+  await kidLogin(page);
+  const r1 = await kidDoes(page, ids[0], { minutes: 12, wrong: ['What is 10 - 4?'] });
+  eq(r1.checkTotal, 3, 'old lesson: all 3 of its test questions');
+  await momLogin(page);
+  await page.evaluate(() => go('results')); await act(page, 'openResult', r1.id);
+  page.topUps = [];
+  await act(page, 'assignRetest', r1.id);
+  await page.waitForFunction(() => Object.keys(S.retests).length === 1, null, { timeout: 8000 });
+  ok(page.topUps.length >= 1 && page.topUps[0].includes('Write exactly 18 new test questions'), 'wrote 15 + 3 spare');
+  await kidLogin(page);
+  await act(page, 'kidRetest', ids[0]);
+  const used = await page.evaluate(() => S.attempt.steps.filter(s => s.k === 'check').map(s => s.id));
+  eq(used.filter(x => r1.testIds.includes(x)).length, 0, 'retest avoids the 3 she had');
+  await play(page, { minutes: 12, wrong: await page.evaluate(u => [S.lessons[S.attempt.lessonId].check.find(q => q.id === u[0]).prompt], used) });
+  const r2 = await S(page, 'S.results[0]');
+  await momLogin(page);
+  await page.evaluate(() => go('results')); await act(page, 'openResult', r2.id);
+  ok((await text(page)).includes('1 retest left'), 'one left');
+  await act(page, 'assignRetest', r2.id);
+  await page.waitForFunction(() => Object.keys(S.retests).length === 1, null, { timeout: 8000 });
+  await kidLogin(page);
+  await act(page, 'kidRetest', ids[0]);
+  await play(page, { minutes: 12 });
+  const r3 = await S(page, 'S.results[0]');
+  eq([r3.kind, r3.root], ['retest', r1.id], 'second retest of the same try');
+  eq(await page.evaluate(() => S.results.filter(r => r.pending).map(r => r.id)), [r3.id], 'only the latest test waits for Accept');
+  await momLogin(page);
+  await page.evaluate(() => go('results')); await act(page, 'openResult', r3.id);
+  eq(await page.locator('[data-a="assignRetest"]').count(), 0, 'no third retest');
+  ok((await text(page)).includes('That was the last retest'), 'Mom is pointed to re-teaching');
+  return page;
+});
+
+test('retest after Mom already accepted: allowed, pays nothing more, takes nothing back', async () => {
+  const page = await open(); await momSetup(page);
+  const id = await bankLesson(page);
+  await kidLogin(page);
+  const r1 = await kidDoes(page, id, { minutes: 25 });
+  await momLogin(page);
+  await page.evaluate(() => go('results')); await act(page, 'openResult', r1.id);
+  await act(page, 'acceptResult', r1.id);
+  eq(await S(page, 'S.points.balance'), 190, 'paid');
+  ok((await text(page)).includes('won’t pay more'), 'Mom told the retest won’t pay');
+  await act(page, 'assignRetest', r1.id);
+  await page.waitForFunction(() => Object.keys(S.retests).length === 1);
+  await kidLogin(page);
+  await act(page, 'kidRetest', id);
+  await play(page, { minutes: 12 });
+  const r2 = await S(page, 'S.results[0]');
+  eq([r2.points, r2.breakdown[0][0]], [0, 'No points: Mom already paid for this lesson'], 'no double pay');
+  eq(await S(page, 'S.points.balance'), 190, 'balance unchanged');
+  return page;
+});
+
+test('bank: a question the second model disagrees with is dropped quietly while the bank has room', async () => {
+  const page = await open(); await momSetup(page);
+  page.badKeys = ['What is 9 + 109?'];
+  const id = await makeLesson(page, 'Topic Drop');
+  const L = await page.evaluate(id => S.lessons[id], id);
+  eq(L.check.length, 39, 'one dropped from the bank');
+  ok(!L.check.some(q => q.prompt === 'What is 9 + 109?'), 'the disputed one is gone');
+  ok(!(await text(page)).includes('Check 1 answer'), 'Mom isn’t asked');
+  eq(await page.evaluate(id => keyIssuesOpen(S.lessons[id]), id), false, 'lesson usable');
+  return page;
+});
+
+test('fix-up after the test only uses questions she has seen, never the unseen bank kept for a retest', async () => {
+  const page = await open(); await momSetup(page);
+  const id = await bankLesson(page);
+  await kidLogin(page);
+  await act(page, 'kidStart', id);
+  await play(page, { minutes: 15, stopAt: 'testintro' });
+  const firstIds = await page.evaluate(() => S.attempt.steps.filter(s => s.k === 'check').map(s => s.id));
+  const wrong = await page.evaluate(ids => ids.slice(0, 2).map(i => S.lessons[S.attempt.lessonId].check.find(q => q.id === i).prompt), firstIds);
+  await act(page, 'testGo');
+  await play(page, { minutes: 10, wrong });
+  const r = await S(page, 'S.results[0]');
+  const plan = await page.evaluate(rid => fixPlan(S.results.find(r => r.id === rid)).map(q => q.id), r.id);
+  const L = await page.evaluate(id => S.lessons[id], id);
+  ok(plan.length >= 2, 'fix-up has questions');
+  ok(plan.every(q => L.practice.some(p => p.id === q) || firstIds.includes(q)), 'only practice or questions from her test');
   return page;
 });
 
