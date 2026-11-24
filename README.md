@@ -6,7 +6,7 @@ Single-page Grade 5 learning app. The page only holds the app; lessons, keys and
 
 End-to-end tests drive the real page in Chromium: Mom's PIN and setup, making a lesson
 (Claude is faked, no key or credits used), Aanya playing every question type, mistakes and
-review, flags, report, final-test length (full test for normal lessons, 3 only for catch-up plan lessons), Mom’s review screen and test-only scoring (with the v17 → v18 re-scoring), backup/restore, rewards and pay-out, and the weekly plan (3 lessons +
+review, flags, report, the final test (15 questions drawn from a 40-question bank, 5 from 12 for catch-up plan lessons; its own sitting; right/wrong hidden until the end; points flat), retests only Mom can give (new unseen questions, the replaced try unpaid, only the accepted test pays, at most 2), Mom’s review screen and test-only scoring (with the v17 → v18 re-scoring), backup/restore, rewards and pay-out, and the weekly plan (3 lessons +
 2 bonus, 8-minute rule, double points, Monday rollover, break weeks), the review fixes (points rules, Mom accepting points, PIN lockout, answer-key check, refresh questions), and sync between two devices (a fake GitHub gist shared by two browsers: joining, points accepted on both devices, saves at the same moment, deletes, restores, mid-lesson waits, token errors, an unfinished lesson left open, a second shared copy, combining two copies). The clock is faked so
 week edges are exact.
 
