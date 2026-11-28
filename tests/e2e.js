@@ -85,7 +85,7 @@ const ok = (cond, msg) => { if (!cond) throw new Fail(msg); };
 const eq = (a, b, msg) => { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Fail(`${msg}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`); };
 
 let browser;
-async function open({ time = WED, state, claudeCalls, init } = {}) {
+async function open({ time = WED, state, claudeCalls, init, realMin } = {}) {
   const ctx = await browser.newContext({ viewport: { width: 820, height: 1180 }, acceptDownloads: true });
   const page = await ctx.newPage();
   page.setDefaultTimeout(6000);
@@ -95,6 +95,9 @@ async function open({ time = WED, state, claudeCalls, init } = {}) {
   page.on('dialog', d => d.accept());
   page.calls = claudeCalls || [];
   if (init) await page.addInitScript(init);
+  // The small fixture lesson has 3 test questions. Most tests are about other things, so they lower the
+  // 10-question minimum (on every load); the tests about the minimum pass realMin: true.
+  if (!realMin) await page.addInitScript(() => document.addEventListener('DOMContentLoaded', () => { CONFIG.TEST_MIN = 1; }));
   await page.route('https://api.anthropic.com/**', async route => {
     const body = JSON.parse(route.request().postData() || '{}');
     page.calls.push(body.model);
@@ -311,11 +314,11 @@ test('Aanya plays a whole lesson, every question type, all right', async () => {
   eq([r.checkRight, r.checkTotal], [3, 3], 'check score');
   eq(r.practiceRight, r.practiceTotal, 'all practice right');
   ok(r.minutes >= 17 && r.minutes <= 24, 'minutes from the clock: ' + r.minutes);
-  const pts = 100 + 40 + 50;
-  eq(r.points, pts, 'points = lesson + final test (40 at 100%, whatever its length) + perfect test (practice and paper pay nothing)');
+  const pts = 300;
+  eq([r.points, r.dollars], [pts, 3], 'a perfect final test pays $3 = 300 points at 100 per $1 (practice and paper pay nothing)');
   eq(await page.evaluate(() => [S.points.balance, pendingPts()]), [0, pts], 'held until Mom accepts');
   const t = await text(page);
-  ok(t.includes('Lesson complete') && t.includes('2 more to fill your week'), 'reward screen with week progress');
+  ok(t.includes('Lesson complete') && t.includes('2 more to fill your week') && t.includes('Worth $3.00'), 'reward screen with week progress and the dollar value');
   return page;
 });
 
@@ -507,15 +510,15 @@ test('8-minute rule: a 5-minute lesson does not count and its slot stays open', 
   return page;
 });
 
-test('bonus lesson pays 2x base points only after the 3, core lessons pay 1x', async () => {
+test('bonus lessons open after the 3 and pay the same as core lessons ($3 cap, no 2x)', async () => {
   const { page, ids } = await freshWithLessons(['Topic A', 'Topic B', 'Topic C', 'Topic D', 'Topic E']);
   await page.evaluate(ids => ids.forEach(id => addToWeek(id, true)), ids);
   await kidLogin(page);
-  for (const id of ids.slice(0, 3)) { const r = await kidDoes(page, id, { minutes: 10 }); eq(r.breakdown[0], ['Lesson complete (score 100%)', 100], 'core pays 100'); }
+  for (const id of ids.slice(0, 3)) { const r = await kidDoes(page, id, { minutes: 10 }); eq(r.breakdown[0], ['Final test: 3 of 3 right · perfect! ($3.00 of $3.00)', 300], 'core pays $3'); }
   const b = await kidDoes(page, ids[3], { minutes: 10 });
-  eq(b.breakdown[0], ['Bonus lesson ×2 (score 100%)', 200], 'bonus pays 200');
+  eq([b.points, b.dollars], [300, 3], 'bonus pays the same $3, not $6');
   ok(b.bonus, 'result marked bonus');
-  ok((await text(page)).includes('Bonus lesson ×2'), 'shown on reward screen');
+  ok(!(await text(page)).includes('×'), 'no multiplier shown');
   const short = await kidDoes(page, ids[4], { minutes: 3 });
   eq([short.points, short.bonus], [0, false], 'a too-short bonus lesson pays nothing');
   eq(await page.evaluate(() => weekList(1)[0].count), 4, 'week count 4');
@@ -651,7 +654,7 @@ test('4-week chart on Mom home and report has the right counts', async () => {
 /* =========================================================
    Fixes from the 2026-11-16 review
    ========================================================= */
-test('points: short lessons pay nothing, a lesson pays once a week, lesson part scales with the score', async () => {
+test('points: short lessons pay nothing, a lesson pays once a week, pay is the test score × $3', async () => {
   const { page, ids } = await freshWithLessons(['Topic A', 'Topic B']);
   await page.evaluate(ids => ids.forEach(id => addToWeek(id, true)), ids);
   await kidLogin(page);
@@ -660,15 +663,15 @@ test('points: short lessons pay nothing, a lesson pays once a week, lesson part 
   for (let i = 0; i < 3; i++) { const r = await kidDoes(page, ids[0], { minutes: 1, wrong: all }); eq(r.points, 0, 'farming run ' + (i + 1) + ' pays 0'); }
   ok((await text(page)).includes('at least 8 minutes'), 'reward screen says why');
   const r1 = await kidDoes(page, ids[0], { minutes: 10, wrong: all });
-  eq(r1.breakdown, [['Lesson complete (score 0%)', 50]], 'a real try with 0% still earns the finishing half');
+  eq(r1.breakdown, [['Final test: 0 of 3 right ($0.00 of $3.00)', 0]], 'a real try with 0% earns nothing: only the test pays');
   await momLogin(page);
   await page.evaluate(id => { S.week.core = S.week.core.filter(x => x !== id); go('lessons'); }, ids[0]); // Mom tries to add it again the same week
   await act(page, 'assignLesson', ids[0]);
   ok(!(await S(page, 'S.week.core')).includes(ids[0]), 'a lesson done this week cannot be added again');
   await kidLogin(page);
   const r3 = await kidDoes(page, ids[1], { minutes: 10, wrong: ['What is 10 - 4?'] });
-  eq(r3.breakdown[0], ['Lesson complete (score 67%)', 84], 'score-scaled: 50 + 50 × 67%');
-  eq(await page.evaluate(() => [S.points.balance, pendingPts()]), [0, 50 + r3.points], 'nothing paid until Mom accepts');
+  eq(r3.breakdown[0], ['Final test: 2 of 3 right ($2.00 of $3.00)', 200], 'score-scaled: 2/3 × $3');
+  eq(await page.evaluate(() => [S.points.balance, pendingPts()]), [0, r3.points], 'nothing paid until Mom accepts');
   ok((await text(page)).length > 0, 'ok');
   await page.evaluate(() => go('kidHome'));
   ok((await text(page)).includes('waiting for Mom'), 'Aanya sees points waiting');
@@ -687,7 +690,7 @@ test('Mom accepts or refuses results; only accepted points reach the balance', a
   await page.evaluate(id => go('result', { id }), c.id);
   await act(page, 'rejectResult', c.id);
   await page.evaluate(() => go('results'));
-  ok((await text(page)).includes(`${a.points + b.points} points are waiting`), 'waiting total shown');
+  ok((await text(page)).includes(`${a.points + b.points} points ($${((a.points + b.points) / 100).toFixed(2)}) are waiting`), 'waiting total shown in points and dollars');
   await act(page, 'acceptAll');
   eq(await page.evaluate(() => [S.points.balance, pendingPts()]), [a.points + b.points, 0], 'accepted two, refused one');
   await page.evaluate(() => go('rewards'));
@@ -1396,7 +1399,7 @@ test('practice mistakes change neither the score nor the points; only the final 
   eq(bad.practiceRight, 0, 'every practice answer wrong');
   eq([bad.mastery, bad.checkRight, bad.checkTotal], [100, 3, 3], 'score is the test: 3 of 3');
   eq(bad.points, good.points, 'same points as a lesson with perfect practice');
-  eq(bad.breakdown.map(x => x[0]), ['Lesson complete (score 100%)', 'Right on the final test', 'Perfect final test!'], 'breakdown names the test');
+  eq(bad.breakdown.map(x => x[0]), ['Final test: 3 of 3 right · perfect! ($3.00 of $3.00)'], 'breakdown names the test only');
   return page;
 });
 
@@ -1568,7 +1571,7 @@ test('final test length: a normal lesson gets the full test, only catch-up lesso
   ok(!page.prompts.some(p => p.includes('SHORT CATCH-UP LESSON')), 'a suggestion is not written as a short catch-up lesson');
   eq([a.meta.short, a.check.length], [false, 40], 'suggested lesson: full 40-question bank');
   ok((await text(page)).includes('15-question final test') && !(await text(page)).includes('The final test has only'), 'Mom sees a full test');
-  // 2. A catch-up plan step is a SHORT lesson and keeps its 3-question test (no top-up)
+  // 2. A catch-up plan step is a SHORT lesson, but its test still has 10 questions (Andrew, 2026-11-28)
   await page.evaluate(() => { S.plan = { id: 'p1', at: Date.now(), scope: 'all', steps: [{ id: 'st1', subject: 'science', title: 'Fix-it: Topic Plants', focus: 'plants', codes: [], gap: false, pct: 40, notes: '', lessonId: null, existing: false, est: 18 }] }; save(); go('momHome'); });
   ok((await text(page)).includes('Catch-up plan'), 'catch-up plan on Home');
   page.prompts = []; page.topUps = [];
@@ -1576,8 +1579,8 @@ test('final test length: a normal lesson gets the full test, only catch-up lesso
   await page.waitForFunction(() => S.plan.steps[0].lessonId && view.name === 'summary', null, { timeout: 10000 });
   const b = await page.evaluate(() => S.lessons[S.plan.steps[0].lessonId]);
   ok(page.prompts.some(p => p.includes('SHORT CATCH-UP LESSON')), 'catch-up step asks for a short lesson');
-  eq([b.meta.short, b.check.length, page.topUps.length], [true, 12, 1], 'catch-up lesson: a 12-question bank (one small top-up)');
-  ok((await text(page)).includes('5-question final test from a bank of 12'), 'catch-up test is 5 questions');
+  eq([b.meta.short, b.check.length, page.topUps.length], [true, 24, 2], 'catch-up lesson: a 24-question bank (two top-up calls)');
+  ok((await text(page)).includes('10-question final test from a bank of 24'), 'catch-up test is 10 questions: the minimum applies to every lesson');
   ok((await text(page)).includes('short catch-up lesson') && !(await text(page)).includes('The final test has only'), 'Mom sees it is a catch-up lesson');
   // 3. Playing the normal lesson asks 15 test questions from the bank
   await page.evaluate(id => addToWeek(id, true), a.id);
@@ -1670,17 +1673,31 @@ test('test: no right/wrong while she answers; every answer shown at the end', as
   const end = await text(page);
   ok(end.includes('Your test answers') && end.includes('14 of 15 right') && end.includes(q.prompt), 'all answers shown at the end, the wrong one with its answer');
   const r = await S(page, 'S.results[0]');
-  eq(r.points, Math.round(50 + 50 * 93 / 100) + Math.round(40 * 14 / 15), 'points: 50–100 by score + 40 × score, no perfect bonus');
+  eq([r.points, r.dollars], [280, 2.8], 'points: 14/15 of $3 = $2.80, no perfect bonus');
   return page;
 });
 
-test('points stay flat with 15 questions: a perfect lesson still pays 190', async () => {
+test('a perfect 15-question test pays exactly $3, whatever the points rate', async () => {
   const page = await open(); await momSetup(page);
   const id = await bankLesson(page);
   await kidLogin(page);
   const r = await kidDoes(page, id, { minutes: 25 });
-  eq([r.checkTotal, r.points], [15, 190], '15 questions, 190 points (100 + 40 + 50)');
-  eq(r.breakdown, [['Lesson complete (score 100%)', 100], ['Right on the final test', 40], ['Perfect final test!', 50]], 'breakdown');
+  eq([r.checkTotal, r.points, r.dollars], [15, 300, 3], '15 questions, $3 = 300 points');
+  eq(r.breakdown, [['Final test: 15 of 15 right · perfect! ($3.00 of $3.00)', 300]], 'breakdown: the test only');
+  // Mom changes the rate before accepting: the $3 cap holds, the points follow the new rate
+  await momLogin(page);
+  await page.evaluate(() => go('rewards'));
+  await page.fill('#rateIn', '250'); await act(page, 'saveRate');
+  eq(await page.evaluate(() => pendingPts()), 750, 'waiting points follow the new rate: $3 × 250');
+  await page.evaluate(id => go('result', { id }), r.id);
+  ok((await text(page)).includes('Accept and pay 750 points ($3.00)'), 'Mom sees points and dollars before paying');
+  await act(page, 'acceptResult', r.id);
+  eq(await page.evaluate(() => [S.points.balance, S.points.balance / S.settings.rate]), [750, 3], 'paid exactly $3');
+  // Mom can change the most a lesson pays
+  await page.evaluate(() => go('rewards'));
+  ok((await text(page)).includes('A perfect final test pays $3.00 (750 points at this rate)'), 'Rewards explains the pay');
+  await page.fill('#maxTestIn', '2'); await act(page, 'saveMaxTest');
+  eq(await page.evaluate(() => [maxTestDollars(), testDollars(15, 15), testDollars(13, 15)]), [2, 2, 1.73], 'new cap, rounded down to the cent');
   return page;
 });
 
@@ -1723,7 +1740,7 @@ test('retest: Mom assigns it, the first try isn’t paid, new questions, right a
   eq(v, 'reward', 'retest done');
   const r2 = await S(page, 'S.results[0]');
   eq([r2.kind, r2.root, r2.checkRight, r2.checkTotal], ['retest', r1.id, 15, 15], 'retest result');
-  eq(r2.points, 190, 'pays like the lesson at its new score (100 + 40 + 50)');
+  eq(r2.points, 300, 'pays like the lesson at its new score ($3 for 15 of 15)');
   ok((await text(page)).includes('Retest complete'), 'retest reward screen');
   st = await S(page);
   eq(Object.keys(st.retests).length, 0, 'retest card gone');
@@ -1732,9 +1749,9 @@ test('retest: Mom assigns it, the first try isn’t paid, new questions, right a
   eq(await page.evaluate(id => lessonInfo(S.lessons[id]).group, id), 'done', 'lesson no longer in Redo');
   await momLogin(page);
   await page.evaluate(() => go('results'));
-  ok((await text(page)).includes('🔁 Retest · Topic Bank') && (await text(page)).includes('190 points are waiting'), 'retest waits for Accept');
+  ok((await text(page)).includes('🔁 Retest · Topic Bank') && (await text(page)).includes('300 points ($3.00) are waiting'), 'retest waits for Accept');
   await act(page, 'acceptAll');
-  eq(await S(page, 'S.points.balance'), 190, 'only the accepted test paid');
+  eq(await S(page, 'S.points.balance'), 300, 'only the accepted test paid');
   return page;
 });
 
@@ -1782,7 +1799,7 @@ test('retest after Mom already accepted: allowed, pays nothing more, takes nothi
   await momLogin(page);
   await page.evaluate(() => go('results')); await act(page, 'openResult', r1.id);
   await act(page, 'acceptResult', r1.id);
-  eq(await S(page, 'S.points.balance'), 190, 'paid');
+  eq(await S(page, 'S.points.balance'), 300, 'paid');
   ok((await text(page)).includes('won’t pay more'), 'Mom told the retest won’t pay');
   await act(page, 'assignRetest', r1.id);
   await page.waitForFunction(() => Object.keys(S.retests).length === 1);
@@ -1791,7 +1808,7 @@ test('retest after Mom already accepted: allowed, pays nothing more, takes nothi
   await play(page, { minutes: 12 });
   const r2 = await S(page, 'S.results[0]');
   eq([r2.points, r2.breakdown[0][0]], [0, 'No points: Mom already paid for this lesson'], 'no double pay');
-  eq(await S(page, 'S.points.balance'), 190, 'balance unchanged');
+  eq(await S(page, 'S.points.balance'), 300, 'balance unchanged');
   return page;
 });
 
@@ -1826,6 +1843,62 @@ test('fix-up after the test only uses questions she has seen, never the unseen b
 });
 
 /* ---------------- runner ---------------- */
+/* =========================================================
+   v23 (Andrew, 2026-11-28): never fewer than 10 test questions; only the final test pays, up to $3
+   ========================================================= */
+test('minimum 10: an old lesson with a 3-question test can’t be assigned or started until Mom builds the bank', async () => {
+  const { page, ids } = await freshWithLessons(['Topic Old'], { realMin: true });
+  const id = ids[0];
+  eq(await page.evaluate(() => CONFIG.TEST_MIN), 10, 'the real minimum');
+  eq(await page.evaluate(id => addToWeek(id), id), false, 'can’t go into the week');
+  ok((await page.locator('#toast').textContent()).includes('only 3 questions'), 'Mom is told why');
+  // already in this week's plan from before the update
+  await page.evaluate(id => { ensureWeek().core.push(id); save(); go('momHome'); }, id);
+  ok((await text(page)).includes('Test has only 3 questions'), 'Mom Home flags it in the week plan');
+  await kidLogin(page);
+  ok((await text(page)).includes('Mom is getting it ready'), 'Aanya sees it isn’t ready');
+  eq(await page.locator(`[data-a="kidStart"][data-v="${id}"]`).count(), 0, 'no Start button');
+  await page.evaluate(id => A.kidStart(id), id);
+  eq(await page.evaluate(() => S.attempt), null, 'can’t start it another way');
+  await momLogin(page);
+  await act(page, 'topUpChecks', id);
+  await page.waitForFunction(id => S.lessons[id].check.length === 40, id, { timeout: 10000 });
+  await kidLogin(page);
+  const r = await kidDoes(page, id, { minutes: 25 });
+  eq(r.checkTotal, 15, 'now a 15-question test');
+  return page;
+});
+
+test('minimum 10: a lesson started before the bank was built waits at the test, then gets the full 15', async () => {
+  const { page, ids } = await freshWithLessons(['Topic Started'], { realMin: true });
+  const id = ids[0];
+  await page.evaluate(id => { ensureWeek().core.push(id); CONFIG.TEST_MIN = 1; save(); }, id); // as if started on v22
+  await kidLogin(page);
+  await act(page, 'kidStart', id);
+  await play(page, { minutes: 12, stopAt: 'testintro' });
+  eq(await page.evaluate(() => S.attempt.steps.filter(s => s.k === 'check').length), 3, 'v22 drew all 3');
+  await page.evaluate(() => { CONFIG.TEST_MIN = 10; render(); });
+  ok((await text(page)).includes('Your test isn’t ready yet'), 'she is told the test isn’t ready, lesson saved');
+  eq(await page.locator('[data-a="testGo"]').count(), 0, 'no Start test button');
+  await page.evaluate(() => A.testGo());
+  eq(await page.evaluate(() => S.attempt.steps[S.attempt.si].k), 'testintro', 'can’t start the 3-question test another way');
+  await momLogin(page);
+  await page.evaluate(id => go('summary', { id }), id);
+  await act(page, 'topUpChecks', id);
+  await page.waitForFunction(id => S.lessons[id].check.length === 40, id, { timeout: 10000 });
+  await kidLogin(page);
+  await page.evaluate(() => go('kidHome'));
+  await act(page, 'resumePlay');
+  ok((await text(page)).includes('Now your test: 15 questions'), 'test intro shows 15');
+  await act(page, 'testGo');
+  eq(await page.evaluate(() => S.attempt.steps.filter(s => s.k === 'check').length), 15, 'redrawn to 15 from the new bank');
+  const v = await play(page, { minutes: 10 });
+  eq(v, 'reward', 'finished');
+  const r = await S(page, 'S.results[0]');
+  eq([r.checkTotal, r.points, r.dollars], [15, 300, 3], '15 of 15 pays $3');
+  return page;
+});
+
 (async () => {
   const filter = process.argv[2] ? new RegExp(process.argv[2], 'i') : null;
   browser = await chromium.launch();

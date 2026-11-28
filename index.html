@@ -335,15 +335,19 @@ const CONFIG = {
   // Model for the "Explain it differently" button.
   EXPLAIN_MODEL: 'claude-haiku-5-5',
   // Final test (Andrew, 2026-11-23): 15 questions, drawn from a bank of about 40 per lesson, so a retest
-  // Mom assigns can use questions Aanya hasn't seen. Catch-up plan lessons: 5 questions from a bank of 12.
-  TEST_LEN: 15, TEST_SHORT: 5,
-  BANK: 40, BANK_SHORT: 12,
+  // Mom assigns can use questions Aanya hasn't seen. Andrew, 2026-11-28: never fewer than 10 questions, for any
+  // lesson (catch-up plan lessons too: 10 from a bank of 24). A test can't start with fewer than TEST_MIN in the bank.
+  TEST_LEN: 15, TEST_SHORT: 10, TEST_MIN: 10,
+  BANK: 40, BANK_SHORT: 24,
   RETEST_MAX: 2,                 // retests Mom can give per lesson attempt (after that: re-teach instead)
   FAST_ANSWER_MS: 5000,          // test answers quicker than this are counted for Mom ("answered very fast")
   EXPLAIN_CAP: 3,                // max "explain differently" taps per lesson
   API_URL: 'https://api.anthropic.com/v1/messages',
-  // testMax: the final test pays this much at 100%, whatever its length (was 5 per right answer on 7-8 questions).
-  POINTS: { lessonBase: 100, perCorrect: 5, testMax: 40, streakBonus: 50, streakEvery: 3, perfectCheck: 50 },
+  // Rewards (Andrew, 2026-11-28): points come ONLY from the final test. A perfect test is worth MAX_TEST_DOLLARS
+  // (Mom can change it in Rewards); less than perfect pays the same share (80% right = 80% of it). The cap is in
+  // dollars, so changing points-per-$1 never makes one test worth more than the cap.
+  MAX_TEST_DOLLARS: 3,
+  POINTS: { streakBonus: 50, streakEvery: 3 },
   DEFAULT_RATE: 100,             // points per $1 (Mom can change this in Rewards)
   STORAGE_KEY: 'g5tutor.v1',
   REFRESH_PER_LESSON: 2,         // questions she got right 7-28 days ago, asked again in the warm-up
@@ -353,8 +357,8 @@ const CONFIG = {
   WEEK_GOAL: 3,                  // lessons per week (Mon-Sun, iPad time)
   WEEK_MIN_MINUTES: 8,           // a finished lesson counts toward the week only with at least this much real work
   WEEK_BONUS: 2,                 // bonus slots Mom can add after the 3 (they unlock once 3 are done)
-  BONUS_MULT: 2,                 // a bonus lesson's base points are multiplied by this
-  VERSION: 'v22 · 23 Nov',        // shown on the first screen so you can tell which copy you are running
+  // Bonus lessons pay the same as core ones (no 2x: that would make a perfect bonus test $6, over the $3 cap).
+  VERSION: 'v23 · 28 Nov',        // shown on the first screen so you can tell which copy you are running
 };
 // NOTE: there is deliberately no API key here. Mom pastes it in Settings.
 
@@ -377,6 +381,11 @@ const shuffle = a => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { c
 const todayStr = (d = new Date()) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const addDays = (s, n) => { const d = new Date(s + 'T12:00:00'); d.setDate(d.getDate() + n); return todayStr(d); };
 const money = n => '$' + (Math.round(n * 100) / 100).toFixed(2);
+const ptRate = () => S.settings.rate || CONFIG.DEFAULT_RATE;
+const maxTestDollars = () => { const v = +S.settings.maxTest; return v > 0 ? v : CONFIG.MAX_TEST_DOLLARS; };
+// pay for a final test, in dollars (whole cents, rounded down so it never goes over the cap)
+const testDollars = (right, total) => total > 0 ? Math.floor(100 * maxTestDollars() * Math.min(right, total) / total + 1e-9) / 100 : 0;
+const dollarsToPts = d => Math.floor(d * ptRate() + 1e-9); // rounded down: never worth more than d
 const fmtDate = t => new Date(t).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
 const gcd = (a, b) => { a = Math.abs(a); b = Math.abs(b); while (b) [a, b] = [b, a % b]; return a; };
 const near = (x, y) => Math.abs(x - y) <= 1e-6 * Math.max(1, Math.abs(x), Math.abs(y));
@@ -560,7 +569,7 @@ function expListText(subj) {
    ================================================================== */
 const DEFAULT_STATE = () => ({
   version: 1,
-  settings: { pin: null, apiKey: '', learnerName: '', rate: CONFIG.DEFAULT_RATE, welcomed: false, lastExport: 0, createdAt: Date.now() },
+  settings: { pin: null, apiKey: '', learnerName: '', rate: CONFIG.DEFAULT_RATE, maxTest: CONFIG.MAX_TEST_DOLLARS, welcomed: false, lastExport: 0, createdAt: Date.now() },
   lessons: {}, order: [], sequences: {},
   todayLessonId: null, attempt: null, assignLog: [], plan: null,
   results: [], review: [], flags: [], notebook: [],
@@ -1330,6 +1339,9 @@ const isShortLesson = L => !!(L.meta.short || (S.plan && S.plan.steps.some(st =>
 const testLen = L => isShortLesson(L) ? CONFIG.TEST_SHORT : CONFIG.TEST_LEN;   // questions in one sitting
 const bankWant = L => isShortLesson(L) ? CONFIG.BANK_SHORT : CONFIG.BANK;      // test questions the lesson keeps
 const checkWant = bankWant;
+// A test never runs with fewer than TEST_MIN questions (Andrew, 2026-11-28: "minimum of 10-15"). Lessons made before
+// v22 kept only 6-8 test questions, which is why she saw 8: those lessons wait for Mom's "Build the test bank".
+const testReady = L => !!L && L.check.length >= CONFIG.TEST_MIN;
 const CHECK_TOPUP_SYSTEM = `TEST TOP-UP. You write final-test questions for a Grade 5 student (age 10) in Ontario, Canada. They go into a bank: each test draws some of them, and a retest draws others, so every question must stand on its own. Return ONE JSON object and nothing else: {"check":[ ... ]} (no markdown, no comments). Only types "mcq" (3–4 "choices", "answer" is one of them word for word) and "numeric" ("answer" a number; for math add "expr", the arithmetic that gives it). Each has "type", "tier" (1 easy, 2 on grade level, 3 stretch; mostly 2), "prompt" (max 30 words, never containing the answer), "explanationWrong" (one kind sentence), "explainRef" (0-based index of the explain card it tests). Spread the questions across every explain card. Each question must differ from every other one (and from the existing ones) in its numbers or situation, not just its wording. For math prefer "numeric" over "mcq". Work every answer out carefully; a wrong key marks a child wrong when she is right. Friendly, kid-level language. Content is neutral and secular.`;
 const qKey = p => String(p || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); // near-duplicate wording counts as the same question
 async function addChecks(L, n, signal) {
@@ -1551,7 +1563,7 @@ function normalizeLesson(raw, subject) {
     explain: arr(raw.explain).map(c => typeof c === 'string' ? { text: str(c), visual: '' } : { text: str(c && c.text), visual: str(c && c.visual), term: str(c && c.term) }).filter(c => c.text).slice(0, 3),
     examples: arr(raw.examples).map(e => ({ title: str(e && e.title), problem: str(e && e.problem), visual: str(e && e.visual), steps: arr(e && e.steps).map(str).filter(Boolean), answer: str(e && e.answer) })).filter(e => e.problem && e.steps.length).slice(0, 3),
     practice: [], offscreen: [], check: [],
-    reward: { pointsBase: CONFIG.POINTS.lessonBase },
+    reward: {},
   };
   L.offscreen = arr(raw.offscreen).map(o => ({ title: str(o && o.title) || 'Pencil time', instructions: str(o && o.instructions), problems: arr(o && o.problems).map(str).filter(Boolean).slice(0, 6), answers: arr(o && o.answers).map(str), minutes: clamp(Math.round(+(o && o.minutes) || 5), 2, 8) })).filter(o => o.problems.length).slice(0, 3);
   L.practice = arr(raw.practice).map((q, i) => normQ(q, 'p' + i, dropped, false)).filter(Boolean).slice(0, 15);
@@ -1660,7 +1672,7 @@ A.writeStep = async v => {
     const prevId = seq.lessons[k - 1] && seq.lessons[k - 1].lessonId, pi = S.order.indexOf(prevId);
     S.order.splice(pi >= 0 ? pi : 0, 0, L.id);
     e.lessonId = L.id; e.status = 'ready';
-    toast(addToWeek(L.id, true) ? 'Written and added to this week.' : 'Written. It’s in Lessons (this week is full).');
+    toast(addToWeek(L.id, true) ? 'Written and added to this week.' : !testReady(L) ? 'Written, but its test needs more questions: open it and tap “Build the test bank”.' : 'Written. It’s in Lessons (this week is full).');
     save();
   } catch (err) { e.status = 'error'; save(); toast('That one didn’t finish. Tap to retry.'); }
   finally { WRITING_STEP = false; writeEnd(); refreshMom(); }
@@ -1688,7 +1700,7 @@ VIEWS.summary = ({ id }) => {
   ${m.forMom ? `<p>${esc(m.forMom)}</p>` : ''}
   ${keyCheckCard(L)}
   <p class="muted">${L.practice.length} practice questions (easy → harder) · ${L.offscreen.length} pencil tasks · ${Math.min(testLen(L), L.check.length)}-question final test from a bank of ${L.check.length}${isShortLesson(L) ? ' (short catch-up lesson)' : ''} · about ${estMinutes(L)} min</p>
-  ${L.check.length < bankWant(L) ? `<div class="card" style="border:2px solid var(--accent)">${L.check.length < testLen(L) ? `<b>The final test has only ${L.check.length} question${L.check.length === 1 ? '' : 's'}.</b> A full test has ${testLen(L)}.` : `<b>The test bank has ${L.check.length} questions.</b>`} A full bank has ${bankWant(L)}, enough for her test and a retest with questions she hasn’t seen.<button class="ghost" style="margin-top:10px" data-a="topUpChecks" data-v="${id}">Build the test bank: ${bankWant(L) - L.check.length} more questions (about ${(bankWant(L) - L.check.length) > 15 ? '10–15' : '5'}¢)</button></div>` : ''}
+  ${L.check.length < bankWant(L) ? `<div class="card" style="border:2px solid var(--accent)">${L.check.length < testLen(L) ? `<b>The final test has only ${L.check.length} question${L.check.length === 1 ? '' : 's'}.</b> A full test has ${testLen(L)}.${testReady(L) ? '' : ` ${esc(kidName())} can’t take it, and it can’t go in her week, until it has at least ${CONFIG.TEST_MIN}.`}` : `<b>The test bank has ${L.check.length} questions.</b>`} A full bank has ${bankWant(L)}, enough for her test and a retest with questions she hasn’t seen.<button class="ghost" style="margin-top:10px" data-a="topUpChecks" data-v="${id}">Build the test bank: ${bankWant(L) - L.check.length} more questions (about ${(bankWant(L) - L.check.length) > 15 ? '10–15' : '5'}¢)</button></div>` : ''}
   <button class="big primary" data-a="startLesson" data-v="${id}">▶ ${L.status === 'done' ? 'Do it again' : inWeek(id) ? 'Hand it to ' + esc(kidName()) : 'START'}</button>
   <div class="row">
     ${S.results.some(r => r.lessonId === id) ? `<button class="ghost" data-a="freshQs" data-v="${id}">🔄 New questions for a redo</button>` : ''}
@@ -1704,6 +1716,7 @@ ${seq ? `<h3>The sequence</h3><div class="card"><ul class="list">${seq.lessons.m
 A.startLesson = id => {
   if (keyIssuesOpen(S.lessons[id])) { toast('Check the answer keys first.'); return; }
   if (inWeek(id) && slotDone(id)) { toast('She already did this one this week.'); return; }
+  if (!testReady(S.lessons[id])) { toast(`Its test has only ${S.lessons[id].check.length} questions. Tap “Build the test bank” first.`); return; }
   if (S.attempt && S.attempt.mode === 'lesson' && S.attempt.lessonId !== id) { if (!confirm(kidName() + ' is part-way through another lesson. Switch? Her progress on it will be cleared.')) return; S.attempt = null; }
   if (!inWeek(id) || slotDone(id)) addToWeek(id, true);
   S.todayLessonId = id;
@@ -1859,7 +1872,7 @@ function weekLead(n, nb = 0) {
   if (n === 0) return `A fresh week! Fill your ${G} stars.`;
   if (n < G - 1) return `${n} filled. ${G - n} to go!`;
   if (n === G - 1) return 'Just 1 more to fill your week!';
-  if (n === G) return nb ? 'You did your 3! 🎉 Bonus lessons are open: double points!' : 'You did your 3! 🎉 Week complete.';
+  if (n === G) return nb ? 'You did your 3! 🎉 Bonus lessons are open!' : 'You did your 3! 🎉 Week complete.';
   if (n < G + B) return `Bonus star! ${G + B - n > 0 && nb > n - G ? 'Another bonus is waiting.' : 'Super effort this week!'}`;
   return 'Super week! 🌟 You can rest or keep exploring.';
 }
@@ -1886,6 +1899,7 @@ const bonusOpen = () => weekList(1)[0].count >= CONFIG.WEEK_GOAL;
 function addToWeek(id, quiet) {
   const W = ensureWeek(), L = S.lessons[id]; if (!L) return false;
   if (keyIssuesOpen(L)) { toast('Check the answer keys first: open the lesson.'); return false; }
+  if (!testReady(L)) { if (!quiet) toast(`This lesson’s test has only ${L.check.length} questions (at least ${CONFIG.TEST_MIN} needed). Open it and tap “Build the test bank” first.`); return false; }
   if (inWeek(id) && !slotDone(id)) { if (!quiet) toast('Already in this week’s plan.'); return true; }
   if (slotDone(id)) { if (!quiet) toast('She already did this one this week. Add it again next week.'); return false; }
   if (W.core.length < CONFIG.WEEK_GOAL) W.core.push(id);
@@ -1908,15 +1922,15 @@ function momPlanCard() {
   const W = ensureWeek(), G = CONFIG.WEEK_GOAL, a = S.attempt;
   const row = (id, label, bonus) => {
     const L = id && S.lessons[id];
-    if (!L) return `<li class="item"><span class="num">${label}</span><div class="grow"><div class="t muted">Empty</div><div class="s">${bonus ? 'Optional · double points, unlocks after the 3' : 'Add one from Lessons'}</div></div></li>`;
+    if (!L) return `<li class="item"><span class="num">${label}</span><div class="grow"><div class="t muted">Empty</div><div class="s">${bonus ? 'Optional · unlocks after the 3' : 'Add one from Lessons'}</div></div></li>`;
     const d = slotDone(id), prog = a && a.mode === 'lesson' && a.lessonId === id;
-    return `<li class="item"><span class="num ${d ? 'ok' : ''}">${d ? '✓' : label}</span><div class="grow"><div class="t">${SUBJECTS[L.meta.subject]?.emoji || ''} ${esc(L.meta.title)}</div><div class="s">${d ? 'Done this week' : prog ? 'In progress' : bonus ? 'Bonus · double points' : 'Not done yet'} · ~${estMinutes(L)} min</div></div>${d ? '<span class="chip g">Done</span>' : `<button class="sm" data-a="weekRemove" data-v="${id}" aria-label="Remove">✕</button>`}</li>`;
+    return `<li class="item"><span class="num ${d ? 'ok' : ''}">${d ? '✓' : label}</span><div class="grow"><div class="t">${SUBJECTS[L.meta.subject]?.emoji || ''} ${esc(L.meta.title)}</div><div class="s">${d ? 'Done this week' : prog ? 'In progress' : bonus ? 'Bonus' : 'Not done yet'} · ~${estMinutes(L)} min</div>${!d && !testReady(L) ? `<div class="s"><b>Test has only ${L.check.length} questions; she can’t take it until it has ${CONFIG.TEST_MIN}+.</b></div><button class="sm" style="margin-top:6px" data-a="topUpChecks" data-v="${id}">Build the test bank (about 10–15¢)</button>` : ''}</div>${d ? '<span class="chip g">Done</span>' : `<button class="sm" data-a="weekRemove" data-v="${id}" aria-label="Remove">✕</button>`}</li>`;
   };
   const core = [...Array(G)].map((_, i) => row(W.core[i], i + 1, false)).join('');
   const bonus = [...Array(CONFIG.WEEK_BONUS)].map((_, i) => row(W.bonus[i], 'B' + (i + 1), true)).join('');
   const need = G - W.core.length;
   return `<div class="card"><div class="row"><h2 style="flex:1 1 0;margin:0;text-align:left">This week’s lessons</h2>${W.brk ? '<span class="chip">🌴 Break week</span>' : `<span class="chip ${weekList(1)[0].count >= G ? 'g' : ''}">${weekList(1)[0].count} done · goal ${G}</span>`}</div>
-  <p class="muted"><small>Week of ${esc(fmtDate(new Date(W.start + 'T12:00:00')))}. ${esc(kidName())} can do the ${G} in any order. Bonus lessons unlock after that and earn ${CONFIG.BONUS_MULT}× points.</small></p>
+  <p class="muted"><small>Week of ${esc(fmtDate(new Date(W.start + 'T12:00:00')))}. ${esc(kidName())} can do the ${G} in any order. Bonus lessons unlock after that and pay like any lesson (up to ${money(maxTestDollars())} for a perfect test).</small></p>
   ${S.weekLeft ? `<div class="strip" data-a="weekLeftOk"><span>Last week: ${S.weekLeft.n} lesson${S.weekLeft.n === 1 ? '' : 's'} not done. ${S.weekLeft.n === 1 ? 'It’s' : 'They’re'} back in Ready.</span><b>OK</b></div>` : ''}
   <ul class="list">${core}</ul><h4 class="lh">Bonus</h4><ul class="list">${bonus}</ul>
   <div class="row" style="margin-top:12px">${need > 0 || W.bonus.length < CONFIG.WEEK_BONUS ? `<button class="ghost" data-a="go" data-v="lessons">＋ Add from Lessons</button>` : ''}<button class="ghost" data-a="weekBreak">${W.brk ? 'Undo break week' : '🌴 Break week (sick / holiday)'}</button></div></div>`;
@@ -1927,14 +1941,14 @@ function kidWeekCard() {
   const row = (id, i, bonus) => {
     const L = S.lessons[id]; if (!L) return '';
     const d = slotDone(id), locked = bonus && !open;
-    const btn = d ? '<span class="chip g">Done ✓</span>' : locked ? '<span class="chip">🔒</span>' : busy === id ? `<button class="sm" data-a="resumePlay">Keep going</button>` : busy ? '' : `<button class="sm" data-a="kidStart" data-v="${id}">Start</button>`;
-    return `<li class="item${locked ? ' locked' : ''}"><span class="slot sm${d ? ' on' : ''}${bonus ? ' bonus' : ''}">${d ? (bonus ? '⭐' : SUBJECTS[L.meta.subject]?.emoji || '⭐') : locked ? '🔒' : bonus ? '⭐' : i + 1}</span><div class="grow"><div class="t">${esc(L.meta.title)}</div><div class="s">${esc(SUBJECTS[L.meta.subject]?.label || '')}${bonus ? ` · ${CONFIG.BONUS_MULT}× points` : ''}</div></div>${btn}</li>`;
+    const btn = d ? '<span class="chip g">Done ✓</span>' : locked ? '<span class="chip">🔒</span>' : busy === id ? `<button class="sm" data-a="resumePlay">Keep going</button>` : busy ? '' : !testReady(L) ? '<span class="chip">Mom is getting it ready</span>' : `<button class="sm" data-a="kidStart" data-v="${id}">Start</button>`;
+    return `<li class="item${locked ? ' locked' : ''}"><span class="slot sm${d ? ' on' : ''}${bonus ? ' bonus' : ''}">${d ? (bonus ? '⭐' : SUBJECTS[L.meta.subject]?.emoji || '⭐') : locked ? '🔒' : bonus ? '⭐' : i + 1}</span><div class="grow"><div class="t">${esc(L.meta.title)}</div><div class="s">${esc(SUBJECTS[L.meta.subject]?.label || '')}${bonus ? ' · bonus' : ''}</div></div>${btn}</li>`;
   };
   const lead = W.brk ? 'Break week 🌴 Rest up! Any lesson still earns points.' : weekLead(cur.count, W.bonus.length);
   return `<div class="card wk${cur.count >= G && !W.brk ? ' full' : ''}"><div class="row"><h2 style="flex:1 1 0;text-align:left">My week</h2>${filled ? `<span class="chip p">🏆 ${filled} week${filled === 1 ? '' : 's'} filled</span>` : ''}</div>
   <p class="lead">${lead}</p>${W.brk ? '' : weekSlots(cur)}
   ${W.core.length ? `<ul class="list" style="margin-top:10px">${W.core.map((id, i) => row(id, i, false)).join('')}</ul>` : `<p class="muted" style="margin-top:12px">Mom hasn’t picked this week’s lessons yet.</p>`}
-  ${W.bonus.length ? `<h4 class="lh">${open ? 'Bonus lessons · double points!' : `Bonus lessons · unlock after your ${G}`}</h4><ul class="list">${W.bonus.map((id, i) => row(id, i, true)).join('')}</ul>` : ''}
+  ${W.bonus.length ? `<h4 class="lh">${open ? 'Bonus lessons · open!' : `Bonus lessons · unlock after your ${G}`}</h4><ul class="list">${W.bonus.map((id, i) => row(id, i, true)).join('')}</ul>` : ''}
   ${busy && !inWeek(busy) ? `<button class="big primary" data-a="resumePlay">Keep going: ${esc(S.lessons[busy].meta.title)}</button>` : ''}
   ${S.results.length || S.breaks.length ? `<div class="stamps">${wk.map(w => { const hit = w.count >= G, br = isBreak(w.start); return `<div class="stamp${hit ? ' hit' : ''}"><b>${hit ? '⭐' : br ? '🌴' : w.count || '–'}</b><small>${esc(w.label)}${hit ? `<br>${w.count} lessons` : br ? '<br>break' : ''}</small></div>`; }).join('')}</div>` : ''}</div>`;
 }
@@ -1958,6 +1972,7 @@ A.kidStart = id => {
   const a = S.attempt;
   if (lessonBusy() && !(a.mode === 'lesson' && a.lessonId === id)) { toast('Finish the lesson you started first.'); return; }
   if (!inWeek(id) || slotDone(id) || (S.week.bonus.includes(id) && !bonusOpen())) { render(); return; }
+  if (!(a && a.lessonId === id) && !testReady(S.lessons[id])) { toast('Mom needs to finish the test for this lesson first.'); render(); return; }
   S.todayLessonId = id; A.startPlay();
 };
 function weekChart(W) {
@@ -2205,11 +2220,24 @@ VIEWS.play.after = () => {
 function testIntroCard(st) {
   const later = '<p class="muted">You’ll see how you did at the end, not after each question.</p>';
   if (S.attempt.mode === 'retest') return `<div class="card"><div class="step-label">Retest 🔁</div><h2>Show what you know now 💪</h2><p style="font-size:20px">${st.n} questions you haven’t seen before. Take your time.</p>${later}<button class="big primary" data-a="testGo">Start →</button></div>`;
-  return `<div class="card"><div class="big-emoji" style="text-align:center">🎉</div><div class="step-label">Lesson part done!</div><h2>Now your test: ${st.n} questions</h2>
+  const L = curLesson(), n = L ? Math.max(st.n, Math.min(testLen(L), L.check.length)) : st.n;
+  if (L && n < CONFIG.TEST_MIN) return `<div class="card"><div class="big-emoji" style="text-align:center">🎉</div><div class="step-label">Lesson part done!</div><h2>Your test isn’t ready yet</h2><p style="font-size:20px">Mom needs to add some questions to it. Your lesson is saved, so you can come back to the test later.</p><button class="big ghost" data-a="exitPlay">OK</button></div>`;
+  return `<div class="card"><div class="big-emoji" style="text-align:center">🎉</div><div class="step-label">Lesson part done!</div><h2>Now your test: ${n} questions</h2>
   <p style="font-size:20px">Start it now, or take a break and come back to it later.</p>${later}
   <button class="big primary" data-a="testGo">Start my test →</button><button class="big ghost" data-a="exitPlay">Take a break first</button></div>`;
 }
-A.testGo = () => { S.attempt.testStart = Date.now(); A.next(); };
+A.testGo = () => {
+  const a = S.attempt, L = curLesson();
+  if (L && (a.mode === 'lesson' || a.mode === 'retest')) {
+    // An attempt started before the bank was built drew a short test: draw again now that there are more questions.
+    const rest = a.steps.slice(a.si + 1), want = a.mode === 'retest' && S.retests[L.id] && S.retests[L.id].n || testLen(L);
+    if (rest.every(x => x.k === 'check') && rest.length < want && L.check.length > rest.length) {
+      const ids = drawTest(L, want); a.steps = [...a.steps.slice(0, a.si), { k: 'testintro', n: ids.length }, ...ids.map(id => ({ k: 'check', id }))];
+    }
+    if (a.steps.slice(a.si + 1).filter(x => x.k === 'check').length < CONFIG.TEST_MIN) { save(); toast('Mom needs to add test questions first. Your lesson is saved.'); render(); return; }
+  }
+  a.testStart = Date.now(); A.next();
+};
 function explainCard(i, isInterject) {
   const a = S.attempt, L = curLesson(), c = L.explain[i];
   const left = CONFIG.EXPLAIN_CAP - (L.explainUsed || 0), alts = a.alt[i] || [];
@@ -2475,7 +2503,6 @@ function submitAnswer(given) {
   const hidden = sec === 'check';
   const fb = hidden ? { hidden: true, correct, given: WIDGETS.includes(q.type) ? '' : given } : { correct, given: WIDGETS.includes(q.type) ? '' : given, cheer: pick(CHEERS), pts: 0 };
   if (!hidden) { a.combo = correct ? (a.combo || 0) + 1 : 0; fb.combo = a.combo; }
-  if (correct) a.pts += CONFIG.POINTS.perCorrect;
   if (st.k === 'practice') {
     if (correct) { a.run = a.run > 0 ? a.run + 1 : 1; if (a.run >= 2) { if (a.tier < 3) { a.tier++; fb.levelUp = true; } a.run = 0; a.maxTier = Math.max(a.maxTier, a.tier); } }
     else { a.run = a.run < 0 ? a.run - 1 : -1; if (a.run <= -2) { if (a.tier > 1) a.tier--; a.run = 0; a.pendingInterject = q.explainRef || 0; } }
@@ -2518,7 +2545,7 @@ A.flagQ = () => {
   const lessonId = st.k === 'warm' ? (S.review.find(r => r.id === st.id)?.lessonId || a.lessonId) : a.lessonId;
   const rec = a.sub.fb ? a.answers[a.answers.length - 1] : null;
   S.flags.push({ id: uid(), lessonId, qid: q.id, prompt: q.prompt, answer: answerText(q), given: rec ? rec.given : '(skipped)', at: Date.now(), status: 'open' });
-  if (rec) { rec.flagged = true; if (rec.correct) a.pts -= CONFIG.POINTS.perCorrect; }
+  if (rec) { rec.flagged = true; }
   else a.answers.push({ si: a.si, sec: secOf(st), qid: q.id, flagged: true, skipped: true, prompt: q.prompt });
   S.review = S.review.filter(r => !(r.lessonId === lessonId && r.q.id === q.id));
   S.notebook = S.notebook.filter(n => !(n.lessonId === lessonId && n.q.id === q.id));
@@ -2644,12 +2671,13 @@ function finishAttempt() {
   const chk = scored.filter(x => x.sec === 'check'), prac = scored.filter(x => x.sec === 'practice');
   const chkRight = chk.filter(x => x.correct).length, chkFree = chk.filter(x => !x.helped);
   const perfect = chk.length > 0 && chkRight === chk.length;
-  const base = CONFIG.POINTS.lessonBase, mins = Math.max(1, Math.round(a.active / 60000));
+  const mins = Math.max(1, Math.round(a.active / 60000));
   // The lesson's score is the final test only (the check at the end), every question in it, help or not.
   // Practice and warm-up never change the score or the points (Andrew, 2026-11-17).
   const mastery = testPct(chkRight, chk.length);
-  // The test part pays POINTS.testMax at 100% whatever the test's length (Andrew, 2026-11-23: points stay flat with 15 questions).
-  const testPts = chk.length ? Math.round(CONFIG.POINTS.testMax * chk.filter(x => x.correct && !x.selfCorrected).length / chk.length) : 0;
+  // Only the final test pays (Andrew, 2026-11-28): a perfect test = maxTestDollars(), otherwise the same share of it.
+  const testRight = chk.filter(x => x.correct && !x.selfCorrected).length;
+  const dollars = testDollars(testRight, chk.length);
   // A retest replaces the try Mom didn't accept: the 8 minutes count the lesson part of that try plus this test.
   const counts = mins + (re && root ? root.minutes || 0 : 0) >= CONFIG.WEEK_MIN_MINUTES;
   const paidThisWeek = S.results.some(x => x.lessonId === L.id && x.paid && x.at >= weekStartMs(S.week.start)); // a try replaced by a retest is not paid
@@ -2658,16 +2686,14 @@ function finishAttempt() {
   let prevT = a.testStart, fast = 0; tAns.forEach(x => { if (prevT != null && x.at - prevT < CONFIG.FAST_ANSWER_MS) fast++; prevT = x.at; });
   const testMin = tAns.length ? Math.max(1, Math.round((tAns[tAns.length - 1].at - (a.testStart || tAns[0].at)) / 60000)) : null;
   // Points rules (see review 2026-11-16): nothing for a lesson that doesn't count (under 8 minutes), nothing for doing
-  // the same lesson again in one week, and the lesson part scales with the help-free check score (half for finishing, half for the score).
-  const lessonPts = Math.round((base / 2 + base / 2 * mastery / 100) * (isBonus ? CONFIG.BONUS_MULT : 1));
-  let bd;
+  // the same lesson again in one week. Bonus lessons pay the same as core ones.
+  let bd, payD = 0;
   if (re && a.noPay) bd = [['No points: Mom already paid for this lesson', 0]];
   else if (!counts) bd = [[`No points this time: lessons pay when you spend at least ${CONFIG.WEEK_MIN_MINUTES} minutes`, 0]];
   else if (paidThisWeek) bd = [['No points: you already earned this lesson this week', 0]];
   else {
-    bd = [[isBonus ? `Bonus lesson ×${CONFIG.BONUS_MULT} (score ${mastery}%)` : re ? `Retest (score ${mastery}%)` : `Lesson complete (score ${mastery}%)`, lessonPts]];
-    if (testPts) bd.push(['Right on the final test', testPts]);
-    if (perfect) bd.push(['Perfect final test!', CONFIG.POINTS.perfectCheck]);
+    payD = dollars;
+    bd = [[`${re ? 'Retest' : 'Final test'}: ${testRight} of ${chk.length} right${perfect ? ' · perfect!' : ''} (${money(dollars)} of ${money(maxTestDollars())})`, dollarsToPts(dollars)]];
   }
   if (!re) bumpStreak(); // still tracked, no longer shown or rewarded: the weekly goal replaced the daily streak
   const total = bd.reduce((s, x) => s + x[1], 0); // held as "waiting for Mom" until she accepts the result
@@ -2686,7 +2712,7 @@ function finishAttempt() {
     expectations: L.meta.expectations.slice(),
     byExp: scored.reduce((m, x) => { if (x.exp && !x.helped && (x.sec === 'practice' || x.sec === 'check')) { const e = m[x.exp] = m[x.exp] || [0, 0]; e[1]++; if (x.correct) e[0]++; } return m; }, {}), // topics she has worked on
     byExpTest: chk.reduce((m, x) => { if (x.exp) { const e = m[x.exp] = m[x.exp] || [0, 0]; e[1]++; if (x.correct) e[0]++; } return m; }, {}), // topic scores: final test only
-    points: total, breakdown: bd, accepted: false, pending: total > 0, paid: total > 0,
+    points: total, dollars: payD, breakdown: bd, accepted: false, pending: total > 0, paid: total > 0,
     selfCorrected: a.answers.filter(x => x.selfCorrected).map(x => ({ prompt: x.prompt, given: x.given, answer: x.answer })),
     fix: (() => { const missed = chk.filter(x => !x.correct).map(x => x.qid); return missed.length ? { missed, done: false } : null; })(),
   };
@@ -2724,9 +2750,9 @@ VIEWS.reward = ({ rid }) => {
 <div class="center-screen reward">
   ${medal(r.mastery)}
   <h1>${r.kind === 'retest' ? 'Retest complete!' : 'Lesson complete!'}</h1>
-  <p class="big-points">+${r.points} points</p>${r.points ? '<p class="muted" style="margin-top:-8px">Mom will check them, then they go in your balance.</p>' : ''}
+  <p class="big-points">+${r.points} points</p>${r.points ? `<p class="muted" style="margin-top:-8px">${CONFIG.SHOW_MONEY && r.dollars != null ? `Worth ${money(r.dollars)}. ` : ''}Mom will check them, then they go in your balance.</p>` : ''}
   <ul class="breakdown">${r.breakdown.map(([k, v]) => `<li><span>${esc(k)}</span><b>+${v}</b></li>`).join('')}</ul>
-  ${r.kind === 'retest' ? '' : (() => { const w = weekList(1)[0], G = CONFIG.WEEK_GOAL; const msg = !countsForWeek(r) ? `Lessons count toward your week when you spend at least ${CONFIG.WEEK_MIN_MINUTES} minutes on them.` : w.count === G ? (S.week.bonus.length ? 'You did your 3! 🎉 Bonus lessons are open: double points!' : 'You did your 3! 🎉 Week complete.') : w.count < G ? `${G - w.count} more to fill your week!` : r.bonus ? `Bonus star! ⭐ ${CONFIG.BONUS_MULT}× points!` : w.count <= G + CONFIG.WEEK_BONUS ? 'Bonus star! ⭐' : 'Super week! 🌟'; return `<div class="card wk${w.count >= G ? ' full' : ''}" style="text-align:center"><p class="lead" style="margin-top:0">${msg}</p>${weekSlots(w, false)}</div>`; })()}
+  ${r.kind === 'retest' ? '' : (() => { const w = weekList(1)[0], G = CONFIG.WEEK_GOAL; const msg = !countsForWeek(r) ? `Lessons count toward your week when you spend at least ${CONFIG.WEEK_MIN_MINUTES} minutes on them.` : w.count === G ? (S.week.bonus.length ? 'You did your 3! 🎉 Bonus lessons are open!' : 'You did your 3! 🎉 Week complete.') : w.count < G ? `${G - w.count} more to fill your week!` : r.bonus ? 'Bonus star! ⭐' : w.count <= G + CONFIG.WEEK_BONUS ? 'Bonus star! ⭐' : 'Super week! 🌟'; return `<div class="card wk${w.count >= G ? ' full' : ''}" style="text-align:center"><p class="lead" style="margin-top:0">${msg}</p>${weekSlots(w, false)}</div>`; })()}
   <div class="stats"><div class="stat"><span style="font-size:26px;line-height:30px">🗓️</span><b>${weekList(1)[0].count}/${CONFIG.WEEK_GOAL}</b><span>this week</span></div><div class="stat">${ICON.star.replace('<svg','<svg width="30" height="30"')}<b>${S.points.balance}</b><span>points</span></div><div class="stat"><span style="font-size:26px;line-height:30px">✅</span><b>${r.checkRight}/${r.checkTotal}</b><span>on the test</span></div></div>
   ${testAnswersCard(r)}
   ${goalCard(true)}
@@ -2766,10 +2792,10 @@ function confetti() {
 const testLine = r => r.checkTotal ? `Test ${r.mastery}% (${r.checkRight} of ${r.checkTotal})` : 'No test';
 VIEWS.results = () => `
 <div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Results</span><span></span></div>
-${S.results.some(r => !r.accepted) ? `<div class="card"><p style="margin-top:0">${pendingPts()} points are waiting for you to accept. Accepting adds them to ${esc(kidName())}’s balance. Tap Review to see her test answers first.</p><button class="big primary" data-a="acceptAll">Accept all</button></div>` : ''}
+${S.results.some(r => !r.accepted) ? `<div class="card"><p style="margin-top:0">${pendingPts()} points (${money(pendingPts() / ptRate())}) are waiting for you to accept. Accepting adds them to ${esc(kidName())}’s balance. Tap Review to see her test answers first.</p><button class="big primary" data-a="acceptAll">Accept all</button></div>` : ''}
 <div class="card">${S.results.length ? `<ul class="list">${S.results.map(r => { const wrong = r.checkTotal ? r.checkTotal - r.checkRight : 0; return `<li class="item"><div class="grow"><div class="t">${r.kind === 'retest' ? '🔁 Retest · ' : ''}${esc(r.title)}</div>
   <div class="s"><b style="color:${r.checkTotal && r.mastery < REDO_BELOW ? 'var(--danger)' : 'inherit'}">${testLine(r)}</b>${wrong ? ` · ${wrong} to go over` : ''}</div>
-  <div class="s">${fmtDate(r.at)} · ${r.minutes} min · ${r.retested && !r.paid ? 'not paid: retest given' : r.rejected ? 'not paid' : (r.points || 0) + ' pts' + (r.pending ? ' waiting' : '')}${r.flagged && r.flagged.length ? ' · 🚩' : ''}</div></div>
+  <div class="s">${fmtDate(r.at)} · ${r.minutes} min · ${r.retested && !r.paid ? 'not paid: retest given' : r.rejected ? 'not paid' : resultPts(r) + ' pts' + (r.dollars != null && resultPts(r) ? ` (${money(r.dollars)})` : '') + (r.pending ? ' waiting' : '')}${r.flagged && r.flagged.length ? ' · 🚩' : ''}</div></div>
   ${r.retested && !r.paid ? '<span class="chip">Retest given</span>' : r.accepted ? '<span class="chip g">Accepted</span>' : `<button class="sm" data-a="acceptResult" data-v="${r.id}">Accept</button>`}<button class="sm" data-a="openResult" data-v="${r.id}">Review</button></li>`; }).join('')}</ul>` : '<p class="muted">No results yet.</p>'}</div>`;
 /* Mom's review of one lesson. Built for a quick look: the final-test score, then every test question with
    her answer next to the right one (the ones to go over first), then the paper work with its expected answers.
@@ -2813,7 +2839,7 @@ ${r.kind === 'retest' ? (() => { const o = S.results.find(x => x.id === r.retest
 ${r.testMin != null ? `<p class="muted" style="margin:4px 0"><small>The test took ${r.testMin} min${r.fast ? ` · ${r.fast} answer${r.fast === 1 ? '' : 's'} came in under ${CONFIG.FAST_ANSWER_MS / 1000} seconds (rushing?)` : ''}.</small></p>` : ''}
 ${r.helpedCount ? `<p class="muted" style="margin:4px 0"><small>${r.helpedCount} test question${r.helpedCount === 1 ? '' : 's'} came after she asked for extra help on that idea. They count like the others.</small></p>` : ''}
 <p class="muted" style="margin:4px 0"><small>Only the final test counts for her score and points. Practice is below, folded away.</small></p>
-${r.retested && !r.paid ? `<p class="chip" style="margin-top:10px">🔁 Retest given · this try isn’t paid</p>` : r.accepted ? `<p class="chip ${r.rejected ? '' : 'g'}" style="margin-top:10px">${r.rejected ? 'Not paid' : `Accepted ✓ · ${r.points} points`}</p>` : `<button class="big primary" data-a="acceptResult" data-v="${r.id}">Accept${r.pending ? ` and pay ${r.points} points` : ''}</button>${r.pending ? `<button class="link" data-a="rejectResult" data-v="${r.id}">Don’t pay for this one</button>` : ''}`}
+${r.retested && !r.paid ? `<p class="chip" style="margin-top:10px">🔁 Retest given · this try isn’t paid</p>` : r.accepted ? `<p class="chip ${r.rejected ? '' : 'g'}" style="margin-top:10px">${r.rejected ? 'Not paid' : `Accepted ✓ · ${r.points} points${r.dollars != null && r.points ? ` (${money(r.dollars)})` : ''}`}</p>` : `<button class="big primary" data-a="acceptResult" data-v="${r.id}">Accept${r.pending ? ` and pay ${resultPts(r)} points${r.dollars != null ? ` (${money(r.dollars)})` : ''}` : ''}</button>${r.pending ? `<button class="link" data-a="rejectResult" data-v="${r.id}">Don’t pay for this one</button>` : ''}`}
 ${retestBlock(r)}</div>
 ${r.checkTotal ? `<h3>Final test</h3>
 ${goOver.length ? `<p class="muted" style="margin:-4px 0 8px">Go over ${goOver.length === 1 ? 'this one' : 'these'} with her</p><ul class="qalist">${goOver.map(x => qaItem(x, x.qn)).join('')}</ul>` : ''}
@@ -2827,7 +2853,7 @@ ${other.length ? `<details class="card more"><summary><b>Practice and warm-up</b
 <ul class="qalist">${other.slice().sort((a, b) => (a.ok - b.ok) || ((a.n || 0) - (b.n || 0))).map(x => qaItem(Object.assign({}, x, { prompt: (x.sec === 'warm' ? 'Warm-up · ' : 'Practice · ') + x.prompt }))).join('')}</ul></details>` : ''}
 ${r.flagged.length ? `<h3>She flagged</h3><div class="card"><p class="muted" style="margin-top:0"><small>She thought the answer key was wrong. These don’t count against her.</small></p><ul>${r.flagged.map(f => `<li>${esc(f)}</li>`).join('')}</ul><button class="ghost" data-a="go" data-v="flags">Review flags when you have time</button></div>` : ''}
 <details class="card more"><summary><b>Points and other details</b></summary><div class="kv">
-${(r.breakdown || []).map(([k, v]) => `<span>${esc(k)}</span><b>${v}</b>`).join('')}<span>Points in total</span><b>${r.points}</b>
+${(r.breakdown || []).map(([k, v]) => `<span>${esc(k)}</span><b>${v}</b>`).join('')}<span>Points in total</span><b>${r.pending && !r.accepted ? resultPts(r) : r.points}${r.dollars != null ? ` · ${money(r.dollars)}` : ''}</b>
 <span>Practice</span><b>${r.practiceRight} of ${r.practiceTotal} (not scored)</b><span>Top level reached in practice</span><b>${r.maxTier}/3</b>
 ${Object.keys(r.byExpTest || {}).length ? Object.entries(r.byExpTest).map(([c, [a, b]]) => `<span>Test: ${esc(c)} ${esc(expText(r.subject, c))}</span><b>${a} of ${b}</b>`).join('') : ''}
 <span>“Explain differently” used</span><b>${r.explainUsed} of ${CONFIG.EXPLAIN_CAP}</b></div></details>`;
@@ -2851,7 +2877,7 @@ function retestBlock(r) {
   if (!canRetest(r)) return !r.retested && S.lessons[r.lessonId] && S.results.find(x => x.lessonId === r.lessonId) === r && retestsUsed(r) >= CONFIG.RETEST_MAX ? `<p class="muted" style="margin:8px 0 0"><small>That was the last retest for this try. If it still isn’t right, teaching it again usually helps more than another test: open the lesson and tap “Do it again” next week.</small></p>` : '';
   const left = CONFIG.RETEST_MAX - retestsUsed(r), paid = r.accepted && !r.rejected && (r.points || 0) > 0;
   return `<button class="big ghost" style="margin-top:10px" data-a="assignRetest" data-v="${r.id}">🔁 Retest with new questions</button>
-  <p class="muted" style="margin:4px 0 0"><small>${paid ? 'You already paid for this try, so a retest won’t pay more.' : `If you give a retest, this try isn’t paid${r.points ? ` (${r.points} points)` : ''}. Only the test you accept pays.`} ${left} retest${left === 1 ? '' : 's'} left for this lesson.</small></p>`;
+  <p class="muted" style="margin:4px 0 0"><small>${paid ? 'You already paid for this try, so a retest won’t pay more.' : `If you give a retest, this try isn’t paid${r.points ? ` (${resultPts(r)} points)` : ''}. Only the test you accept pays.`} ${left} retest${left === 1 ? '' : 's'} left for this lesson.</small></p>`;
 }
 A.assignRetest = async (rid, el) => {
   const r = S.results.find(x => x.id === rid), L = r && S.lessons[r.lessonId];
@@ -2873,8 +2899,11 @@ A.assignRetest = async (rid, el) => {
   S.retests[L.id] = { id: uid(), lessonId: L.id, rid: r.id, root: retestRoot(r), at: Date.now(), n, noPay: paid || !!r.noPay };
   save(); toast(`Retest ready for ${kidName()} 🔁`); render();
 };
-const pendingPts = () => S.results.filter(r => r.pending && !r.accepted).reduce((t, r) => t + (r.points || 0), 0);
-function acceptOne(r) { if (!r || r.accepted) return; r.accepted = true; if (r.pending) { addPoints(r.points, 'Lesson: ' + r.title, 'acc-' + r.id); r.pending = false; } }
+/* A result made since v23 holds its pay in dollars; its points follow the points-per-$1 rate when Mom accepts,
+   so a rate change can never make one test pay more than the cap. */
+const resultPts = r => r.dollars != null ? dollarsToPts(r.dollars) : (r.points || 0);
+const pendingPts = () => S.results.filter(r => r.pending && !r.accepted).reduce((t, r) => t + resultPts(r), 0);
+function acceptOne(r) { if (!r || r.accepted) return; r.accepted = true; if (r.pending) { r.points = resultPts(r); if (r.breakdown && r.breakdown[0] && r.dollars != null) r.breakdown[0][1] = r.points; addPoints(r.points, 'Lesson: ' + r.title + (r.dollars != null ? ` (${money(r.dollars)})` : ''), 'acc-' + r.id); r.pending = false; } }
 A.acceptResult = id => { acceptOne(S.results.find(x => x.id === id)); save(); toast('Accepted ✓'); render(); };
 A.acceptAll = () => { const n = S.results.filter(r => !r.accepted).length; S.results.filter(r => !r.accepted).forEach(acceptOne); save(); toast(`Accepted ${n} ✓`); render(); };
 A.rejectResult = id => { const r = S.results.find(x => x.id === id); if (!r || r.accepted || !confirm('Don’t pay the points for this lesson?')) return; r.accepted = true; r.pending = false; r.rejected = true; save(); toast('Not paid.'); render(); };
@@ -2908,7 +2937,8 @@ VIEWS.rewards = () => {
 <div class="topbar"><button data-a="go" data-v="momHome">← Home</button><span class="who">Rewards</span><span></span></div>
 <div class="card"><h2>${esc(kidName())} has ${S.points.balance} points</h2><p class="muted">That’s ${money(S.points.balance / rate)} at ${rate} points per $1.</p>
 <label>Points per $1</label><div class="row"><input type="number" inputmode="numeric" min="1" id="rateIn" value="${rate}"><button class="ghost" style="flex:0" data-a="saveRate">Save</button></div>
-<p class="muted"><small>At this rate a finished lesson is worth about ${money(CONFIG.POINTS.lessonBase / rate)} plus answer points, and a bonus lesson about ${money(CONFIG.POINTS.lessonBase * CONFIG.BONUS_MULT / rate)}. ${esc(kidName())} sees her points in dollars.</small></p>
+<label>Most a lesson can pay (perfect final test), $</label><div class="row"><input type="number" inputmode="decimal" min="0.01" step="0.01" id="maxTestIn" value="${maxTestDollars()}"><button class="ghost" style="flex:0" data-a="saveMaxTest">Save</button></div>
+<p class="muted"><small>A perfect final test pays ${money(maxTestDollars())} (${dollarsToPts(maxTestDollars())} points at this rate). Less than perfect pays the same share: 80% right pays ${money(testDollars(4, 5))}. Three lessons a week can pay up to ${money(maxTestDollars() * CONFIG.WEEK_GOAL)}, or ${money(maxTestDollars() * (CONFIG.WEEK_GOAL + CONFIG.WEEK_BONUS))} with both bonus lessons. ${esc(kidName())} sees her points in dollars.</small></p>
 <label>Pay out (she spent points on something)</label><div class="row"><input type="number" inputmode="decimal" min="0" step="0.01" id="payIn" placeholder="$ amount"><button class="ghost" style="flex:0" data-a="payOut">Take points</button></div></div>
 <h3>Goals (what she’s saving for)</h3>
 <div class="card">${S.goals.length ? `<ul class="list">${S.goals.map(g => `<li class="item"><div class="grow"><div class="t">${esc(g.name)} ${g.done ? '✓' : ''}</div><div class="s">${money(g.price)} = ${Math.round(g.price * rate)} points</div></div>
@@ -2919,8 +2949,8 @@ VIEWS.rewards = () => {
 <div class="card">${S.redeemables.length ? `<ul class="list">${S.redeemables.map(r => `<li class="item"><div class="grow t">${esc(r.name)}</div><span class="chip">${r.points} pts</span><button class="sm" data-a="redeem" data-v="${r.id}">Redeem</button><button class="sm" data-a="redeemDel" data-v="${r.id}">✕</button></li>`).join('')}</ul>` : '<p class="muted">e.g. “30 min screen time”, “Pick dinner”.</p>'}
   <div class="row" style="margin-top:10px"><input data-bind="RW:rname" placeholder="Reward" value="${esc(FORMS.RW.rname)}"><input data-bind="RW:rpts" type="number" inputmode="numeric" placeholder="Points" style="max-width:120px" value="${esc(FORMS.RW.rpts)}"><button class="ghost" style="flex:0" data-a="redeemAdd">Add</button></div></div>
 <h3>How points are earned</h3>
-<div class="card kv"><span>Finish a lesson (8+ minutes, once a week each), by final test score</span><b>${CONFIG.POINTS.lessonBase / 2}–${CONFIG.POINTS.lessonBase}</b><span>Each right answer on the final test</span><b>${CONFIG.POINTS.perCorrect}</b><span>Perfect final test</span><b>${CONFIG.POINTS.perfectCheck}</b><span>Bonus lesson (after the ${CONFIG.WEEK_GOAL}), by final test score</span><b>${CONFIG.POINTS.lessonBase / 2 * CONFIG.BONUS_MULT}–${CONFIG.POINTS.lessonBase * CONFIG.BONUS_MULT}</b><span>Practice, paper work, mistake reviews and fix-ups, self-corrections, short lessons</span><b>0</b></div>
-<p class="muted"><small>Lesson points wait until you accept the result (Home → results to check).</small></p>
+<div class="card kv"><span>Perfect final test (8+ minutes on the lesson, once a week each)</span><b>${money(maxTestDollars())}</b><span>Final test, not perfect</span><b>same share: score × ${money(maxTestDollars())}</b><span>Bonus lesson</span><b>same as any lesson</b><span>Practice, warm-up, paper work, mistake reviews and fix-ups, self-corrections</span><b>0</b></div>
+<p class="muted"><small>Points wait until you accept the result (Home → results to check). If you give a retest instead, only the test you accept pays.</small></p>
 <h3>History</h3><div class="card">${S.points.log.length ? `<ul class="list">${S.points.log.slice(-15).reverse().map(x => `<li class="item"><div class="grow"><div class="t">${esc(x.why)}</div><div class="s">${new Date(x.t).toLocaleString()}</div></div><b>${x.n > 0 ? '+' : ''}${x.n || ''}</b></li>`).join('')}</ul>` : '<p class="muted">Nothing yet.</p>'}</div>`;
 };
 A.payOut = () => {
@@ -2930,6 +2960,7 @@ A.payOut = () => {
   if (!confirm(`Take ${pts} points (${money(d)}) from ${kidName()}?`)) return;
   addPoints(-pts, 'Paid out ' + money(d)); save(); toast('Done. ' + S.points.balance + ' points left.'); render();
 };
+A.saveMaxTest = () => { const v = Math.round(100 * +$('#maxTestIn').value) / 100, old = maxTestDollars(); if (v > 0 && v !== old) { S.settings.maxTest = v; S.points.log.push({ id: uid(), t: Date.now(), n: 0, why: `Most per lesson changed: ${money(old)} → ${money(v)}` }); save(); toast('Saved.'); render(); } else if (!(v > 0)) toast('Type a dollar amount.'); };
 A.saveRate = () => { const v = Math.round(+$('#rateIn').value), old = S.settings.rate || 100; if (v >= 1 && v !== old) { S.settings.rate = v; S.points.log.push({ id: uid(), t: Date.now(), n: 0, why: `Rate changed: ${old} → ${v} points per $1` }); save(); toast('Saved.'); render(); } };
 A.goalAdd = () => { const n = str(FORMS.RW.goal), p = +FORMS.RW.price; if (!n || !(p > 0)) { toast('Add a name and a price.'); return; } S.goals.push({ id: uid(), name: n, price: Math.round(p * 100) / 100, done: false }); FORMS.RW.goal = ''; FORMS.RW.price = ''; save(); render(); };
 A.goalDel = id => { S.goals = S.goals.filter(g => g.id !== id); save(); render(); };
